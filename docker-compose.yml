@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: ticketbox_postgres
+    environment:
+      POSTGRES_USER: ticketbox_user
+      POSTGRES_PASSWORD: ticketbox_password
+      POSTGRES_DB: ticketbox_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./src/data/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - ticketbox_net
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: ticketbox_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - ticketbox_net
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: ticketbox_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@ticketbox.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    networks:
+      - ticketbox_net
+    restart: unless-stopped
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  ticketbox_net:
+    name: ticketbox_net
+    driver: bridge
