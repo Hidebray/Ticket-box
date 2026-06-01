@@ -4,66 +4,92 @@ Hệ thống bán vé sự kiện toàn diện với kiến trúc Multi-tenant (
 
 ## 🚀 1. Yêu cầu Hệ thống
 
-Để khởi chạy dự án, máy tính của bạn cần cài đặt các công cụ sau:
+Để khởi chạy dự án, máy tính của bạn cần cài đặt:
 - **Node.js**: Phiên bản v18.x trở lên.
-- **PostgreSQL**: Phiên bản 13+ (Hoặc dùng Docker).
-- **Redis**: Phục vụ Caching và Rate Limiting (Hoặc dùng Docker).
-- **Docker & Docker Compose** (Tùy chọn nhưng khuyên dùng để chạy DB và Redis nhanh chóng).
+- **Docker & Docker Compose**: Để chạy PostgreSQL và Redis (bắt buộc nếu không cài sẵn).
+
+> ⚠️ Nếu máy đã cài **PostgreSQL** trực tiếp (không qua Docker), hãy đảm bảo nó **không chiếm cổng `5432`** — nếu có, hãy tắt service đó trước khi chạy Docker.
 
 ---
 
 ## 🛠️ 2. Cài đặt & Khởi chạy (Setup & Build)
 
 ### Bước 2.1: Khởi động Database & Redis bằng Docker
-Mở Terminal ở thư mục gốc của dự án (`Ticket_box_2`) và chạy:
+
+Mở Terminal ở **thư mục gốc** của dự án (`Ticket_box/`) và chạy:
+
 ```bash
 docker-compose up -d
 ```
-Lệnh này sẽ tải và chạy PostgreSQL (cổng `5432`) và Redis (cổng `6379`) ở chế độ ngầm.
 
-### Bước 2.2: Khởi tạo Database Schema
-Bạn cần chạy file `init.sql` nằm trong thư mục `data/` vào database `ticketbox_db`.
-*Lưu ý: File `init.sql` chứa các Store Procedure và Trigger để ngăn chặn Overselling.*
+Lệnh này sẽ khởi động:
+- **PostgreSQL** (cổng `5432`) — database chính
+- **Redis** (cổng `6379`) — hàng đợi và caching
+- **pgAdmin** (cổng `5050`) — giao diện quản lý DB tại `http://localhost:5050`
 
-### Bước 2.3: Thiết lập & Chạy Backend
-Mở một Terminal mới và di chuyển vào thư mục `src/backend`:
+---
+
+### Bước 2.2: Thiết lập & Chạy Backend
+
+Mở một Terminal mới, di chuyển vào thư mục `src/backend`:
+
 ```bash
 cd src/backend
 npm install
 ```
 
 Tạo file `.env` trong thư mục `src/backend` với nội dung:
+
 ```env
 PORT=3001
-DATABASE_URL="postgresql://ticketuser:ticketpass@localhost:5432/ticketbox_db?schema=public"
+DATABASE_URL="postgresql://ticketbox_user:ticketbox_password@localhost:5432/ticketbox_db?schema=public"
 REDIS_URL="redis://localhost:6379"
-JWT_SECRET="YOUR_SUPER_SECRET_KEY"
-FRONTEND_URL="http://localhost:5173"
 ```
 
-Khởi tạo Prisma Client và chạy Seed (Tạo dữ liệu mẫu):
+Generate Prisma Client và nạp dữ liệu mẫu (seed):
+
 ```bash
-npx prisma generate
+npx prisma generate --schema="../data/schema.prisma"
 npx prisma db seed
 ```
 
-Khởi chạy Server Backend:
+> 💡 Lệnh seed sẽ tự động xóa dữ liệu cũ, tạo lại schema và nạp dữ liệu mẫu gồm users, concerts, ticket types và ghế ngồi.
+
+Khởi chạy Server Backend (chế độ dev, tự reload):
+
 ```bash
 npm run dev
 ```
 
-### Bước 2.4: Thiết lập & Chạy Frontend
-Mở một Terminal khác và di chuyển vào thư mục `src/frontend`:
+Backend sẽ chạy tại `http://localhost:3001`.
+
+---
+
+### Bước 2.3: Thiết lập & Chạy Frontend
+
+Mở một Terminal mới, di chuyển vào thư mục `src/frontend`:
+
 ```bash
 cd src/frontend
 npm install
 npm run dev
 ```
+
 Truy cập vào `http://localhost:5173` để mở ứng dụng web.
 
 ---
 
-## 🧪 3. Các Kịch Bản Kiểm Thử Quan Trọng (Testing Scenarios)
+## 👤 3. Tài khoản mặc định (sau khi seed)
+
+| Role | Email | Password | Quyền hạn |
+|------|-------|----------|-----------|
+| SUPER_ADMIN | `admin@ticketbox.com` | `admin123` | Quản lý toàn bộ hệ thống |
+| ORGANIZER | `organizer@ticketbox.vn` | `123456` | Tạo và quản lý concert |
+| AUDIENCE | `audience@ticketbox.vn` | `123456` | Xem và đặt vé |
+
+---
+
+## 🧪 4. Các Kịch Bản Kiểm Thử Quan Trọng (Testing Scenarios)
 
 Hệ thống được thiết kế chặt chẽ với nhiều Role. Dưới đây là các kịch bản test để đảm bảo mọi tính năng cốt lõi đều hoạt động.
 
@@ -114,6 +140,6 @@ Hệ thống được thiết kế chặt chẽ với nhiều Role. Dưới đâ
 - **Mục tiêu**: Quét mã QR tại cổng bảo vệ.
 - **Thực hiện**:
   1. Đăng nhập bằng tài khoản có role `STAFF`.
-  2. Vào màn hình Check-in.
+  2. Vào màn hình Check-in tại `/staff/checkin`.
   3. Nhập chuỗi mã QR của một vé `SUCCESS` vào ô quét.
   4. Kết quả báo "Hợp lệ xanh rực". Quét lại mã đó lần thứ 2, hệ thống phải báo Đỏ "Vé đã được sử dụng".
