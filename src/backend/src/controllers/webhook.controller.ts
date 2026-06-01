@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import prisma from '../config/db';
 import redisClient from '../config/redis';
+import NotificationService from '../services/notification.service';
 
 export const handlePaymentWebhook = async (req: Request, res: Response): Promise<void> => {
     try {
@@ -41,7 +42,40 @@ export const handlePaymentWebhook = async (req: Request, res: Response): Promise
                 });
             });
 
+            // Tải chi tiết đơn hàng kèm thông tin user và concert để gửi email
+            const updatedOrder = await prisma.orders.findUnique({
+                where: { id: orderId },
+                include: {
+                    users: true,
+                    tickets: {
+                        include: {
+                            ticket_types: {
+                                include: {
+                                    concerts: true
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            if (updatedOrder && updatedOrder.users) {
+                const ticketDetails = updatedOrder.tickets.map((t: any) => ({
+                    id: t.id,
+                    seatLabel: t.seat_label,
+                    price: Number(t.ticket_types.price),
+                    concertName: t.ticket_types.concerts.name,
+                    startTime: t.ticket_types.concerts.start_time
+                }));
+
+                NotificationService.notifyTicketConfirmation(
+                    updatedOrder.users.email,
+                    ticketDetails
+                ).catch(err => console.error('Lỗi khi gửi email xác nhận mua vé:', err));
+            }
+
             res.status(200).json({ message: 'Payment success, tickets are now valid' });
+
             
         } else if (status === 'FAILED') {
             // Thanh toán thất bại -> Hủy Order, xóa Tickets, hoàn số lượng lại cho hệ thống

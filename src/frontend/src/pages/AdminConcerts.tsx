@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
-import { Plus, Edit2, Ticket, Grid } from 'lucide-react';
+import { Plus, Edit2, Ticket, Grid, Sparkles, FileText } from 'lucide-react';
 import SeatingMapBuilder from '../components/admin/SeatingMapBuilder';
+
 
 export default function AdminConcerts() {
   const { token } = useAuth();
@@ -22,6 +23,15 @@ export default function AdminConcerts() {
   // States for Seating Map Modal
   const [showMapModal, setShowMapModal] = useState(false);
   const [activeTicketType, setActiveTicketType] = useState<any>(null);
+
+  // States for AI Bio Modal
+  const [showBioModal, setShowBioModal] = useState(false);
+  const [activeConcert, setActiveConcert] = useState<any>(null);
+  const [bioFile, setBioFile] = useState<File | null>(null);
+  const [isGeneratingBio, setIsGeneratingBio] = useState(false);
+  const [generatedBio, setGeneratedBio] = useState('');
+  const [bioStep, setBioStep] = useState('');
+
 
   const fetchConcerts = async () => {
     try {
@@ -74,6 +84,48 @@ export default function AdminConcerts() {
       alert('Lỗi thêm loại vé');
     }
   };
+
+  const handleUploadBio = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bioFile || !activeConcert) return;
+
+    setIsGeneratingBio(true);
+    setGeneratedBio('');
+    setBioStep('Đang tải lên và trích xuất PDF...');
+
+    const bioFormData = new FormData();
+    bioFormData.append('file', bioFile);
+
+    const stepInterval = setInterval(() => {
+      setBioStep(prev => {
+        if (prev.includes('trích xuất')) return 'Mô hình AI đang phân tích nội dung...';
+        if (prev.includes('phân tích')) return 'Đang tổng hợp bản giới thiệu nghệ sĩ...';
+        return 'Sắp hoàn thành...';
+      });
+    }, 2500);
+
+    try {
+      const res = await axios.post(
+        `http://localhost:3001/api/admin/concerts/${activeConcert.id}/upload-bio`,
+        bioFormData,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'multipart/form-data'
+          }
+        }
+      );
+      clearInterval(stepInterval);
+      setGeneratedBio(res.data.bio);
+      setBioStep('Hoàn tất!');
+      fetchConcerts();
+    } catch (err: any) {
+      clearInterval(stepInterval);
+      alert(err.response?.data?.message || 'Lỗi khi tạo AI Bio');
+      setIsGeneratingBio(false);
+    }
+  };
+
 
   if (loading) return <div className="text-white">Đang tải...</div>;
 
@@ -134,6 +186,18 @@ export default function AdminConcerts() {
                     className="p-2 text-blue-400 hover:bg-blue-500/20 rounded-lg transition-colors" title="Thêm loại vé"
                   >
                     <Ticket className="w-5 h-5" />
+                  </button>
+                  <button 
+                    onClick={() => { 
+                      setActiveConcert(concert);
+                      setBioFile(null);
+                      setGeneratedBio('');
+                      setIsGeneratingBio(false);
+                      setShowBioModal(true);
+                    }}
+                    className="p-2 text-purple-400 hover:bg-purple-500/20 rounded-lg transition-colors" title="Tải lên Press Kit & Tạo AI Bio"
+                  >
+                    <Sparkles className="w-5 h-5" />
                   </button>
                   <button 
                     onClick={() => { 
@@ -243,6 +307,95 @@ export default function AdminConcerts() {
                 fetchConcerts();
               }}
             />
+          </div>
+        </div>
+      )}
+
+      {/* Modal Tải lên Press Kit và tạo AI Bio */}
+      {showBioModal && activeConcert && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-slate-700/80 p-8 rounded-3xl w-full max-w-2xl shadow-2xl relative">
+            <button 
+              onClick={() => setShowBioModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors"
+            >
+              Đóng
+            </button>
+            <h2 className="text-2xl font-bold mb-2 flex items-center gap-2">
+              <Sparkles className="text-purple-400" />
+              Tạo AI Artist Bio
+            </h2>
+            <p className="text-slate-400 text-sm mb-6">
+              Tải lên file PDF hồ sơ nghệ sĩ hoặc press kit của sự kiện <span className="text-white font-semibold">"{activeConcert.name}"</span>. Hệ thống sẽ tự động đọc nội dung và sử dụng AI để viết giới thiệu nghệ sĩ ngắn gọn.
+            </p>
+
+            <form onSubmit={handleUploadBio} className="space-y-6">
+              {!isGeneratingBio && !generatedBio && (
+                <div className="border-2 border-dashed border-slate-600 hover:border-purple-400 bg-slate-900/40 rounded-2xl p-8 text-center cursor-pointer relative transition-all duration-300">
+                  <input 
+                    required 
+                    type="file" 
+                    accept=".pdf" 
+                    onChange={e => setBioFile(e.target.files ? e.target.files[0] : null)}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  />
+                  <FileText className="w-12 h-12 text-slate-500 mx-auto mb-4" />
+                  {bioFile ? (
+                    <div>
+                      <p className="text-lg font-semibold text-purple-400">{bioFile.name}</p>
+                      <p className="text-xs text-slate-400">{(bioFile.size / 1024).toFixed(2)} KB</p>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-slate-300 font-medium">Click để chọn file PDF hoặc kéo thả vào đây</p>
+                      <p className="text-xs text-slate-500 mt-1">Chấp nhận file định dạng .pdf (Tối đa 10MB)</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {isGeneratingBio && (
+                <div className="p-8 bg-slate-900/50 rounded-2xl border border-purple-500/20 text-center flex flex-col items-center">
+                  <div className="relative w-16 h-16 mb-4">
+                    <div className="absolute inset-0 rounded-full border-4 border-purple-500/20 border-t-purple-500 animate-spin"></div>
+                    <Sparkles className="absolute inset-0 w-6 h-6 text-purple-400 m-auto animate-pulse" />
+                  </div>
+                  <p className="text-purple-400 font-bold text-lg mb-1">{bioStep}</p>
+                  <p className="text-sm text-slate-400">Quá trình này có thể mất từ 5-15 giây tùy thuộc dung lượng PDF.</p>
+                </div>
+              )}
+
+              {generatedBio && (
+                <div className="space-y-4">
+                  <h3 className="font-bold text-sm text-purple-400 uppercase tracking-wider">Mô tả giới thiệu do AI sinh:</h3>
+                  <div className="bg-slate-900/60 p-6 rounded-2xl border border-slate-700/50 text-slate-300 text-sm leading-relaxed max-h-60 overflow-y-auto">
+                    {generatedBio}
+                  </div>
+                  <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-xs text-emerald-400 font-medium">
+                    ✓ Đã lưu thành công vào cơ sở dữ liệu và tự động làm mới giao diện khán giả.
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-4">
+                <button 
+                  type="button" 
+                  onClick={() => setShowBioModal(false)} 
+                  className="flex-1 px-5 py-3 bg-slate-700 hover:bg-slate-600 rounded-xl font-bold transition-all text-center"
+                >
+                  {generatedBio ? 'Đóng' : 'Hủy'}
+                </button>
+                {!generatedBio && (
+                  <button 
+                    type="submit" 
+                    disabled={!bioFile || isGeneratingBio}
+                    className="flex-1 px-5 py-3 bg-purple-600 hover:bg-purple-500 disabled:bg-slate-700 disabled:text-slate-500 rounded-xl font-bold transition-all shadow-lg shadow-purple-600/30 flex justify-center items-center gap-2"
+                  >
+                    Bắt đầu Phân tích AI
+                  </button>
+                )}
+              </div>
+            </form>
           </div>
         </div>
       )}

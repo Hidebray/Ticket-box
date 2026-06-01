@@ -4,6 +4,8 @@ import axios from 'axios';
 import { CalendarDays, MapPin, Ticket, AlertCircle } from 'lucide-react';
 import InteractiveSeatingMap from '../components/InteractiveSeatingMap';
 import { useAuth } from '../contexts/AuthContext';
+import gsap from 'gsap';
+
 
 interface TicketType {
   id: string;
@@ -49,6 +51,28 @@ export default function ConcertDetail() {
       });
   }, [id]);
 
+  useEffect(() => {
+    if (!loading && concert) {
+      gsap.fromTo('.concert-title', 
+        { opacity: 0, y: 30 }, 
+        { opacity: 1, y: 0, duration: 0.8, ease: 'power3.out' }
+      );
+      gsap.fromTo('.concert-meta', 
+        { opacity: 0, y: 20 }, 
+        { opacity: 1, y: 0, duration: 0.8, delay: 0.2, ease: 'power3.out' }
+      );
+      gsap.fromTo('.concert-left-col', 
+        { opacity: 0, x: -30 }, 
+        { opacity: 1, x: 0, duration: 0.8, delay: 0.3, ease: 'power3.out' }
+      );
+      gsap.fromTo('.concert-right-col', 
+        { opacity: 0, x: 30 }, 
+        { opacity: 1, x: 0, duration: 0.8, delay: 0.3, ease: 'power3.out' }
+      );
+    }
+  }, [loading, concert]);
+
+
   if (loading) return <div className="min-h-screen pt-32 text-center text-xl animate-pulse">Đang tải thông tin sự kiện...</div>;
   if (!concert) return <div className="min-h-screen pt-32 text-center text-xl text-red-500">Sự kiện không tồn tại hoặc đã bị gỡ.</div>;
 
@@ -71,8 +95,8 @@ export default function ConcertDetail() {
           <button onClick={() => navigate('/')} className="text-slate-400 hover:text-white mb-6 text-sm flex items-center transition-colors">
             ← Quay lại danh sách
           </button>
-          <h1 className="text-4xl md:text-6xl font-bold tracking-tight leading-tight mb-4">{concert.name}</h1>
-          <div className="flex flex-wrap gap-6 text-slate-300">
+          <h1 className="concert-title text-4xl md:text-6xl font-bold tracking-tight leading-tight mb-4">{concert.name}</h1>
+          <div className="concert-meta flex flex-wrap gap-6 text-slate-300">
             <div className="flex items-center"><CalendarDays className="w-5 h-5 mr-2 text-primary" /> {time} - {formattedDate}</div>
             <div className="flex items-center"><MapPin className="w-5 h-5 mr-2 text-primary" /> Xem bản đồ địa điểm</div>
           </div>
@@ -81,7 +105,8 @@ export default function ConcertDetail() {
 
       <div className="max-w-7xl mx-auto px-6 py-16 grid grid-cols-1 lg:grid-cols-12 gap-12">
         {/* Left Column: Bio & Map */}
-        <div className="lg:col-span-8 space-y-12">
+        <div className="concert-left-col lg:col-span-8 space-y-12">
+
           
           {/* Bio Section */}
           <section>
@@ -125,7 +150,8 @@ export default function ConcertDetail() {
         </div>
 
         {/* Right Column: Ticket Selection */}
-        <div className="lg:col-span-4">
+        <div className="concert-right-col lg:col-span-4">
+
           <div className="sticky top-24 bg-surface rounded-2xl border border-slate-700 p-6 shadow-xl">
             <h2 className="text-xl font-bold mb-6">Chọn Hạng Vé</h2>
             

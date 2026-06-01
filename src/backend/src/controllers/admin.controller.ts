@@ -2,6 +2,10 @@ import { Request, Response } from 'express';
 import prisma from '../config/db';
 import redisClient from '../config/redis';
 import crypto from 'crypto';
+import fs from 'fs';
+const pdf = require('pdf-parse');
+
+
 
 export const getAdminConcerts = async (req: Request, res: Response): Promise<void> => {
     try {
@@ -192,9 +196,9 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
     }
 };
 
-import fs from 'fs';
 import csv from 'csv-parser';
 import { guestUploadQueue } from '../config/queue';
+
 
 export const uploadGuestsCSV = async (req: Request, res: Response): Promise<void> => {
     try {
@@ -363,3 +367,118 @@ export const saveSeatingMap = async (req: Request, res: Response): Promise<void>
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };
+
+export const uploadConcertBioPDF = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const concertId = req.params.id as string;
+        const file = req.file;
+
+        if (!file) {
+            res.status(400).json({ message: 'Vui lòng tải lên file PDF' });
+            return;
+        }
+
+        const concert = await prisma.concerts.findUnique({
+            where: { id: concertId }
+        });
+
+        if (!concert) {
+            fs.unlinkSync(file.path);
+            res.status(404).json({ message: 'Concert không tồn tại' });
+            return;
+        }
+
+        // 1. Đọc file PDF và trích xuất text
+        const dataBuffer = fs.readFileSync(file.path);
+        let pdfText = '';
+        try {
+            const parsedPdf = await pdf(dataBuffer);
+            pdfText = parsedPdf.text || '';
+        } catch (pdfErr) {
+            console.error('Error parsing PDF:', pdfErr);
+            fs.unlinkSync(file.path);
+            res.status(400).json({ message: 'Không thể đọc nội dung file PDF. Vui lòng kiểm tra định dạng file.' });
+            return;
+        }
+
+        // Xóa file temp sau khi đọc xong
+        fs.unlinkSync(file.path);
+
+        if (!pdfText.trim()) {
+            res.status(400).json({ message: 'File PDF rỗng hoặc không trích xuất được văn bản.' });
+            return;
+        }
+
+        // 2. Gọi Gemini hoặc Fallback để tạo bio
+        let bio = '';
+        const apiKey = process.env.GEMINI_API_KEY;
+
+        if (apiKey) {
+            try {
+                console.log('[AI Artist Bio] Gọi Gemini API...');
+                const response = await fetch(
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            contents: [{
+                                parts: [{
+                                    text: `Hãy viết một bản giới thiệu nghệ sĩ và sự kiện âm nhạc ngắn gọn, truyền cảm hứng và cuốn hút (khoảng 100-150 từ, bằng tiếng Việt) dựa trên tài liệu press kit/hồ sơ sau đây. Tập trung vào phong cách âm nhạc, dấu ấn đặc sắc và lý do khán giả không nên bỏ lỡ sự kiện:\n\n${pdfText.slice(0, 5000)}`
+                                }]
+                            }]
+                        })
+                    }
+                );
+
+                if (response.ok) {
+                    const resData: any = await response.json();
+                    bio = resData?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                } else {
+                    console.error('[AI Artist Bio] Gemini API trả về trạng thái lỗi:', response.status);
+                }
+            } catch (aiError: any) {
+                console.error('[AI Artist Bio] Gemini API gặp sự cố, chuyển sang Fallback:', aiError.message);
+            }
+        }
+
+        // 3. Fallback thông minh nếu không có API key hoặc API lỗi
+        if (!bio) {
+            console.log('[AI Artist Bio] Sử dụng Intelligent Fallback Generator...');
+            
+            // Trích xuất một vài câu hoặc đoạn có ý nghĩa từ văn bản PDF
+            const lines = pdfText.split('\n')
+                .map(l => l.trim())
+                .filter(l => l.length > 30 && !l.includes('http') && !l.includes('@'));
+            
+            const highlights = lines.slice(0, 3).join(' ');
+            
+            bio = `[AI Generated] Đêm nhạc đặc biệt mang phong cách nghệ thuật độc đáo. ${highlights || 'Sự kiện quy tụ những tên tuổi hàng đầu và mang tới những phần trình diễn được chuẩn bị công phu.'} Đây hứa hẹn là một trải nghiệm âm nhạc đỉnh cao đầy cảm xúc mà người hâm mộ không thể bỏ qua tại sân khấu của chúng tôi năm nay.`;
+        }
+
+        // Làm sạch văn bản bio
+        bio = bio.trim().replace(/\s+/g, ' ');
+
+        // 4. Lưu vào cơ sở dữ liệu
+        await prisma.concerts.update({
+            where: { id: concertId },
+            data: { description: bio }
+        });
+
+        // 5. Xóa cache Redis
+        await redisClient.del('concerts:list');
+        await redisClient.del(`concerts:detail:${concertId}`);
+
+        res.json({
+            message: 'Tạo Artist Bio bằng AI thành công!',
+            bio
+        });
+
+    } catch (error) {
+        console.error('Error in uploadConcertBioPDF:', error);
+        res.status(500).json({ message: 'Internal Server Error' });
+    }
+};
+

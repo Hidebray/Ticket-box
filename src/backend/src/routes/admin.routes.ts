@@ -8,7 +8,8 @@ import {
     getDashboardStats,
     uploadGuestsCSV,
     getUploadProgress,
-    saveSeatingMap
+    saveSeatingMap,
+    uploadConcertBioPDF
 } from '../controllers/admin.controller';
 
 const router = Router();
@@ -34,7 +35,12 @@ router.post('/ticket-types', createTicketType);
 // Upload CSV Guests
 router.post('/guests/upload', upload.single('file'), uploadGuestsCSV);
 router.get('/guests/progress/:jobId', getUploadProgress);
+
+// Upload PDF Artist Bio
+router.post('/concerts/:id/upload-bio', upload.single('file'), uploadConcertBioPDF);
+
 // Seating Map
 router.post('/concerts/:id/zones/:ticketTypeId/seating', saveSeatingMap);
 
 export default router;
+
