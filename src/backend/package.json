@@ -44,6 +44,6 @@
   },
   "prisma": {
     "schema": "../data/schema.prisma",
-    "seed": "ts-node ../data/seed.ts"
+    "seed": "ts-node prisma/seed.ts"
   }
 }

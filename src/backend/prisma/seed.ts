@@ -34,7 +34,7 @@ async function main() {
     await prisma.users.deleteMany();
 
     console.log('Seeding users...');
-    
+
     const defaultPassword = '$2b$10$6cRyhlDW0tm3mlUvSZuPp.W795zf0DA.WDevg6hyTN37P4lL51QTe'; // 123456
     const adminPassword = await bcrypt.hash('admin123', 10);
 
@@ -58,7 +58,7 @@ async function main() {
     const audience = await prisma.users.create({
         data: {
             email: 'audience@ticketbox.vn',
-            password: defaultPassword, 
+            password: defaultPassword,
             role: 'AUDIENCE'
         }
     });
@@ -109,7 +109,7 @@ async function main() {
 
         for (const zone of zones) {
             seatingMap[zone.type.id] = { rows: zone.rows, cols: zone.cols, disabledSeats: [] };
-            
+
             for (let r = 0; r < zone.rows; r++) {
                 const rowLabel = getRowLabel(r);
                 for (let c = 0; c < zone.cols; c++) {
