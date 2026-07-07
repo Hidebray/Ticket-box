@@ -1,7 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_ticketbox';
+// [SEC-01] Không dùng hardcoded fallback — phải cấu hình qua env (validate trong server.ts)
+const JWT_SECRET = process.env.JWT_SECRET!;
 
 export const authenticate = (req: Request, res: Response, next: NextFunction): void => {
     const authHeader = req.headers.authorization;

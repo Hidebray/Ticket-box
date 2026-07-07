@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import prisma from '../config/db';
 import redisClient from '../config/redis';
 import NotificationService from '../services/notification.service';
+import crypto from 'crypto';
+import { Prisma } from '@prisma/client';
 
 export const handlePaymentWebhook = async (req: Request, res: Response): Promise<void> => {
     try {
@@ -30,7 +32,7 @@ export const handlePaymentWebhook = async (req: Request, res: Response): Promise
 
         if (status === 'SUCCESS') {
             // Cập nhật Order -> SUCCESS, Tickets -> SOLD (đồng nghĩa với AVAILABLE để người dùng đem đi check-in)
-            await prisma.$transaction(async (tx: any) => {
+            await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
                 await tx.orders.update({
                     where: { id: orderId },
                     data: { status: 'SUCCESS' }
@@ -60,7 +62,7 @@ export const handlePaymentWebhook = async (req: Request, res: Response): Promise
             });
 
             if (updatedOrder && updatedOrder.users) {
-                const ticketDetails = updatedOrder.tickets.map((t: any) => ({
+                const ticketDetails = updatedOrder.tickets.map(t => ({
                     id: t.id,
                     seatLabel: t.seat_label,
                     price: Number(t.ticket_types.price),
@@ -74,12 +76,13 @@ export const handlePaymentWebhook = async (req: Request, res: Response): Promise
                 ).catch(err => console.error('Lỗi khi gửi email xác nhận mua vé:', err));
             }
 
-            res.status(200).json({ message: 'Payment success, tickets are now valid' });
+            // Push SSE Update
+            await redisClient.publish('payment_updates', JSON.stringify({ orderId, status: 'SUCCESS' }));
 
-            
+            res.status(200).json({ message: 'Payment success, tickets are now valid' });
         } else if (status === 'FAILED') {
             // Thanh toán thất bại -> Hủy Order, xóa Tickets, hoàn số lượng lại cho hệ thống
-            await prisma.$transaction(async (tx: any) => {
+            await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
                 await tx.orders.update({
                     where: { id: orderId },
                     data: { status: 'FAILED' }
@@ -97,6 +100,9 @@ export const handlePaymentWebhook = async (req: Request, res: Response): Promise
                 await redisClient.incrby(remainingKey, qty);
             }
 
+            // Push SSE Update
+            await redisClient.publish('payment_updates', JSON.stringify({ orderId, status: 'FAILED' }));
+
             res.status(200).json({ message: 'Payment failed, tickets returned to pool' });
         } else {
             res.status(400).json({ message: 'Invalid status' });
@@ -104,6 +110,33 @@ export const handlePaymentWebhook = async (req: Request, res: Response): Promise
 
     } catch (error) {
         console.error('Webhook processing error:', error);
+        res.status(500).json({ message: 'Internal Server Error' });
+    }
+};
+
+export const mockPaymentHandler = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { orderId, status } = req.body;
+        const secret = process.env.WEBHOOK_SECRET || 'default-dev-secret';
+        
+        const payload = JSON.stringify({ orderId, status });
+        const signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+
+        // Loopback request to the actual webhook endpoint
+        const port = process.env.PORT || 3001;
+        const response = await fetch(`http://localhost:${port}/api/webhooks/payment`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-webhook-signature': signature
+            },
+            body: payload
+        });
+        
+        const result = await response.json();
+        res.status(response.status).json(result);
+    } catch (error) {
+        console.error('Mock payment error:', error);
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };

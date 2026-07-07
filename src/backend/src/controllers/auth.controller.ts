@@ -3,20 +3,18 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import prisma from '../config/db';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_ticketbox';
+// [SEC-01] Không dùng hardcoded fallback — phải cấu hình qua env (validate trong server.ts)
+const JWT_SECRET = process.env.JWT_SECRET!;
 
 export const register = async (req: Request, res: Response): Promise<void> => {
     try {
         const { email, password, role } = req.body;
 
-        if (!email || !password || !role) {
-            res.status(400).json({ message: 'Missing required fields' });
-            return;
-        }
 
-        const validRoles = ['AUDIENCE', 'ORGANIZER', 'STAFF'];
-        if (!validRoles.includes(role)) {
-            res.status(400).json({ message: 'Invalid role' });
+        // [SEC-05] Chỉ cho phép self-register với role AUDIENCE.
+        // ORGANIZER và STAFF phải được SUPER_ADMIN/ORGANIZER cấp quyền thủ công.
+        if (role !== 'AUDIENCE') {
+            res.status(400).json({ message: 'Self-registration is only allowed for role AUDIENCE' });
             return;
         }
 
@@ -55,10 +53,6 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     try {
         const { email, password } = req.body;
 
-        if (!email || !password) {
-            res.status(400).json({ message: 'Missing email or password' });
-            return;
-        }
 
         const user = await prisma.users.findUnique({ where: { email } });
         if (!user) {
@@ -73,7 +67,8 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         }
 
         const payload = { id: user.id, role: user.role };
-        const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '1d' });
+        const expiresIn = process.env.JWT_EXPIRES_IN || '1d';
+        const token = jwt.sign(payload, JWT_SECRET, { expiresIn: expiresIn as jwt.SignOptions['expiresIn'] });
 
         res.json({
             message: 'Login successful',
