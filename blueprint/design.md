@@ -125,22 +125,27 @@ erDiagram
   USER ||--o{ TICKET : "owns"
 ```
 
-### 🔴 QUYẾT ĐỊNH QUAN TRỌNG: Ràng buộc tính vẹn toàn dữ liệu tại Database (Database-level Constraints)
+### 🔴 QUYẾT ĐỊNH QUAN TRỌNG 1: Ràng buộc tính vẹn toàn dữ liệu tại Database (Database-level Constraints)
 Để giải quyết triệt để bài toán **Giới hạn số vé/user dưới tải cao** (ví dụ: mỗi người chỉ mua tối đa 2 vé SVIP), chúng ta **TUYỆT ĐỐI KHÔNG** dùng logic application-level blocking (ví dụ: `SELECT count -> check ở code Node.js -> INSERT`) vì sẽ sinh ra race condition khi hàng nghìn request đến cùng lúc.
 
 Thay vào đó, phải sử dụng **SQL Migrations** để tạo ra các ràng buộc trực tiếp dưới Database để đảm bảo data integrity:
 1. **Trigger / Stored Procedure:** Tạo function đếm số lượng vé của user và gắn trigger `BEFORE INSERT` trên bảng lưu giao dịch/vé.
 2. Nếu user mua vượt quá `TICKET_TYPE.max_per_user`, DB sẽ ném ra lỗi (exception) ngay lập tức. Tính năng Transaction Control (ACID) của Database sẽ block cứng việc overselling này một cách đáng vị cậy nhất.
 
+### 🔴 QUYẾT ĐỊNH QUAN TRỌNG 2: Concurrency Control cho Map Builder
+Khi Ban tổ chức (Organizer/Admin) thực hiện lưu Sơ đồ ghế (Seating Map), hệ thống cần xóa và tạo lại số lượng vé tương ứng. Nếu lúc này khán giả đang tiến hành mua vé (đang giữ chỗ/thanh toán), thao tác này cực kỳ rủi ro (Data Loss & Race Condition).
+**Giải pháp:**
+1. **Row-level Lock (`FOR UPDATE`):** Mọi giao dịch sửa đổi Sơ đồ ghế bắt buộc phải gọi khóa Row-level trên bảng `ticket_types` thông qua `prisma.$transaction`. Điều này sẽ ngăn các giao dịch sinh Order mới từ Khán giả chen ngang.
+2. **Safe Deletion:** Lệnh xóa vé (`deleteMany`) chỉ được phép thực thi với điều kiện `status = 'AVAILABLE'`. Không bao giờ xóa vé ở các trạng thái khác (`RESERVED`, `SOLD`, `CHECKED_IN`) để bảo vệ nguyên trạng giao dịch người dùng.
+
 ## 3. Các cơ chế bảo vệ hệ thống (ADRs)
 
 ### 3.1. Rate Limiting (Kiểm soát tải đột biến)
-- **Kỹ thuật:** Sử dụng thuật toán **Token Bucket** triển khai trên **Redis** với cấu hình **Rate Limiting kép**.
-- **Lý do:** Giới hạn theo IP thông thường dễ chặn nhầm người dùng hợp lệ dùng chung mạng NAT (như mạng công ty, ký túc xá).
+- **Kỹ thuật:** Sử dụng thư viện `express-rate-limit` kết hợp `rate-limit-redis` (triển khai trên **Redis**) với cấu hình **Rate Limiting kép**.
+- **Lý do:** Bảo vệ hệ thống khỏi DDoS và Bot spam tự động đặt vé.
 - **Thực thi:**
-  - Áp dụng **ngưỡng khắt khe (strict limit)** cho từng `User ID` (ví dụ: 5 requests/giây).
-  - Áp dụng **ngưỡng nới lỏng (loose limit)** cho từng địa chỉ IP (ví dụ: 100 requests/giây).
-  - Trả về HTTP 429 Too Many Requests nếu vượt ngưỡng.
+  - **Global Limiter**: Mức 100 requests / phút / IP bảo vệ các API thông thường.
+  - **Strict Limiter**: Mức khắt khe (10 requests / phút / IP/User) dành riêng cho các API nhạy cảm như Đặt vé (Checkout) và Tạm khóa ghế. Trả về lỗi `429 Too Many Requests` khi vi phạm.
 
 ### 3.2. Circuit Breaker (Xử lý cổng thanh toán không ổn định)
 - **Kỹ thuật:** Áp dụng mẫu Circuit Breaker (sử dụng thư viện `opossum`) khi giao tiếp với VNPAY/MoMo.
@@ -151,11 +156,11 @@ Thay vào đó, phải sử dụng **SQL Migrations** để tạo ra các ràng 
   - **Half-Open:** Sau khoảng thời gian chờ (vd 30s), cho phép một vài request thăm dò. Nếu thành công -> Closed; nếu lỗi -> lại Open.
 
 ### 3.3. Idempotency Key (Chống trừ tiền 2 lần)
-- **Kỹ thuật:** Cấp phát một mã băm xác định (deterministic hash).
+- **Kỹ thuật:** Cấp phát một mã băm xác định (deterministic UUID/hash).
 - **Lý do:** Chống việc khán giả rớt mạng và ấn F5 (reload trang) làm tuột mất vé do sinh ID mới.
 - **Cơ chế:**
-  - Backend sử dụng hàm băm `Hash(UserID + ConcertID + CartHash)` làm Idempotency-Key.
-  - Kiểm tra trạng thái Key trong Redis trước khi xử lý giao dịch.
+  - Frontend chủ động sinh ra `Idempotency-Key` (ví dụ: UUID) và gửi lên qua HTTP Header.
+  - Backend kiểm tra trạng thái Key trong Redis trước khi xử lý giao dịch.
   - Xử lý mượt mà các luồng double-click hoặc reload trang mà không bao giờ bị trừ tiền hai lần.
 
 ### 3.4. Caching cho Ticket Count (Giảm tải Database)
@@ -164,6 +169,19 @@ Thay vào đó, phải sử dụng **SQL Migrations** để tạo ra các ràng 
 - **Thực thi:**
   - Số vé còn lại được cache trong Redis với TTL ngắn (khoảng 5-10s).
   - Lệnh đặt vé thực tế dùng lệnh `DECR` nguyên tử để check nhanh, kết hợp với các ràng buộc SQL dưới Database.
+
+### 3.5. Bảo Mật Webhook (Webhook Signature Verification)
+- **Kỹ thuật:** Sử dụng Middleware `verifyWebhookSignature` với mã băm **HMAC SHA256**.
+- **Lý do:** Chống tấn công giả mạo (Spoofing) bằng cách xác minh tính toàn vẹn của request gửi từ cổng thanh toán (VNPAY/MoMo).
+- **Thực thi:** Payload request kết hợp với Secret Key tạo thành mã băm, đối chiếu với header `x-webhook-signature` trước khi chuyển trạng thái đơn hàng thành `SUCCESS` hoặc `FAILED`.
+
+### 3.6. Trải nghiệm Real-time (Tạm Khóa Ghế - Seat Holding)
+- **Kỹ thuật:** Kết hợp Redis `SETNX`, TTL và **Server-Sent Events (SSE)**.
+- **Lý do:** Ngăn chặn bực bội cho người dùng khi tranh mua một chiếc ghế cụ thể trên sơ đồ động (Race Condition về mặt UI).
+- **Thực thi:**
+  - User click vào ghế -> Backend set key `seat_hold:{ticketId}` với TTL (120s) trên Redis.
+  - Backend publish thông báo trạng thái `HOLDING` qua Redis channel.
+  - Tất cả client đang mở bản đồ nhận SSE và lập tức đổi màu chiếc ghế đó sang màu Cam (Đang giữ) và khoá click. Quá 120s nếu không thanh toán, ghế tự động nhả về Xanh (Trống).
 
 ## 4. Quy tắc Cài đặt (Implementation Rules)
 

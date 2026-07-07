@@ -16,19 +16,22 @@ Luồng xử lý mua vé của khán giả từ lúc chọn vé đến khi thanh
    - Nếu kết quả `>= 0`: Cho phép người dùng đi tiếp.
    - Nếu kết quả `< 0`: Lập tức trả lỗi hết vé, và dùng lệnh `INCR` cộng bù lại 1 vé để cân bằng. Cập nhật `Idempotency-Key` = `failed`.
    - Lưu Order (trạng thái `PENDING`) và Insert Tickets (trạng thái `RESERVED`) vào PostgreSQL. Nhờ **SQL constraints**, DB sẽ block nếu user mua quá giới hạn dù vượt qua được vòng kiểm tra Redis.
+   - **Lưu ý chống Ticket Leak**: Nếu Node.js crash giữa lúc DECR Redis và Insert Postgres thành công, vé sẽ bị "treo". Hệ thống có một **Reconciliation Job (Job đối soát)** chạy lặp mỗi 5 phút để lấy số lượng khả dụng từ DB và đồng bộ hóa (heal) lại bộ đếm trong Redis.
 4. **Gọi Cổng Thanh Toán:**
    - Backend gọi API VNPAY/MoMo để lấy Redirect URL.
    - (Có bọc qua Circuit Breaker để tránh kẹt hệ thống nếu VNPAY sập).
    - Trả Redirect URL cho Client. Cập nhật `Idempotency-Key` = `completed` cùng dữ liệu URL này.
-5. **Xử lý Webhook Thanh Toán:**
+5. **Xử lý Webhook Thanh Toán & Server-Sent Events (SSE):**
    - Cổng thanh toán gọi Webhook báo thành công.
    - Update Order = `SUCCESS`, Tickets = `AVAILABLE` (chính thức sở hữu).
    - Bắn event vào RabbitMQ/Redis PubSub để hệ thống Worker sinh QR Code và gửi Email/Notification.
+   - Gửi sự kiện cập nhật giao dịch (qua kênh Redis Pub/Sub) để báo cho Frontend.
+   - Frontend không cần Polling định kỳ mà mở một kết nối **SSE (Server-Sent Events)**, phản hồi và chuyển tiếp giao diện (instant redirect) ngay khi nhận được trạng thái SUCCESS từ Backend.
 
 ## Kịch bản lỗi
 - **Khán giả Spam Click hoặc Reload trang (F5):** Dù tải lại trang thì `UserID + ConcertID + CartHash` vẫn không đổi, tạo ra `Idempotency-Key` trùng khớp. Request thứ 2 sẽ bị chặn lại ở bước 2 mà không sinh lỗi nhân bản.
 - **Rớt mạng khi đang chờ thanh toán:** Khán giả tải lại trang, sinh ra request mới trùng Idempotency-Key. Nếu cố tình sửa giỏ hàng để tạo key mới, DB Constraint (giới hạn số vé/user) sẽ chốt chặn cuối cùng nếu Order cũ đang giữ vé.
-- **Thanh toán Timeout (Webhook không về):** Cronjob (mỗi 5 phút) quét các Order `PENDING` quá 15 phút. Gọi API kiểm tra chéo trạng thái giao dịch với VNPAY. Nếu VNPAY báo fail hoặc không có -> Cancel Order, release vé bằng `INCR` trong Redis và nhả vé DB để người khác mua.
+- **Thanh toán Timeout (Webhook không về):** Ngay khi tạo Order, hệ thống push một **Delayed Job** (BullMQ) với thời gian trì hoãn đúng 15 phút. Khi job chạy, nếu Order vẫn đang `PENDING` -> Cancel Order, release vé bằng `INCR` trong Redis và xóa vé DB để người khác mua. Cơ chế này nhẹ và chính xác hơn hẳn việc dùng node-cron quét DB định kỳ.
 
 ## Ràng buộc
 - Thời gian giữ vé (Reservation TTL): Tối đa 15 phút. Qua 15 phút không thanh toán sẽ hủy giữ vé.
