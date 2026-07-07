@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: ticketbox_password
       POSTGRES_DB: ticketbox_db
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./src/data/init.sql:/docker-entrypoint-initdb.d/init.sql

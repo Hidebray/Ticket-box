@@ -1,6 +1,10 @@
 # Ticket Box - Hệ thống Bán Vé Sự Kiện Tốc Độ Cao
 
-Hệ thống bán vé sự kiện toàn diện với kiến trúc Multi-tenant (nhiều Ban tổ chức), hỗ trợ tính năng chọn ghế chính xác (Sơ đồ ghế động) và khả năng chịu tải cực cao (Chống Overselling bằng Row-Level Locking và Redis Rate-Limiting).
+Hệ thống bán vé sự kiện toàn diện với kiến trúc Multi-tenant (nhiều Ban tổ chức), hỗ trợ tính năng chọn ghế chính xác (Sơ đồ ghế động) và khả năng chịu tải cực cao.
+**Kiến trúc tối ưu bao gồm:**
+- **Chống Overselling**: Bằng Row-Level Locking trong PostgreSQL.
+- **Bảo mật & Ổn định**: Rate-Limiting qua RedisStore và Webhook Signature Verification.
+- **Trải nghiệm Real-time (Tạm khóa ghế)**: Sử dụng Redis Pub/Sub và Server-Sent Events (SSE) để đồng bộ màu ghế (HOLDING) tức thì trên tất cả trình duyệt khi có người click chọn ghế.
 
 ## 🚀 1. Yêu cầu Hệ thống
 
@@ -143,3 +147,11 @@ Hệ thống được thiết kế chặt chẽ với nhiều Role. Dưới đâ
   2. Vào màn hình Check-in tại `/staff/checkin`.
   3. Nhập chuỗi mã QR của một vé `SUCCESS` vào ô quét.
   4. Kết quả báo "Hợp lệ xanh rực". Quét lại mã đó lần thứ 2, hệ thống phải báo Đỏ "Vé đã được sử dụng".
+
+### Kịch bản 7: Tạm Khóa Ghế & Rate Limiting (Mới)
+- **Mục tiêu**: Đảm bảo UX thời gian thực và chống Bot spam.
+- **Thực hiện**:
+  1. Đăng nhập 2 tài khoản Khán giả ở 2 trình duyệt khác nhau và mở cùng 1 sơ đồ ghế.
+  2. Ở trình duyệt 1, click chọn 1 ghế. Ghế đó sẽ lập tức chuyển màu Cam (Đang giữ) ở trình duyệt 2.
+  3. Trình duyệt 2 không thể click vào ghế đó. Nếu trình duyệt 1 bỏ chọn, ghế trả về màu Xanh (Trống).
+  4. Nếu dùng tool hoặc click liên tục vào nút Mua vé quá 5 lần/phút, hệ thống sẽ chặn bằng lỗi `429 Too Many Requests`.
