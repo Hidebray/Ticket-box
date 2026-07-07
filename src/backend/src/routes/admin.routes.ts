@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
+import { validate, createConcertSchema, createTicketTypeSchema, seatingMapSchema } from '../types/validation.schemas';
 import { 
     getAdminConcerts, 
     createConcert, 
@@ -26,11 +27,11 @@ router.get('/dashboard', getDashboardStats);
 
 // Concerts CRUD
 router.get('/concerts', getAdminConcerts);
-router.post('/concerts', createConcert);
-router.put('/concerts/:id', updateConcert);
+router.post('/concerts', validate(createConcertSchema), createConcert);
+router.put('/concerts/:id', validate(createConcertSchema), updateConcert);
 
 // Ticket Types
-router.post('/ticket-types', createTicketType);
+router.post('/ticket-types', validate(createTicketTypeSchema), createTicketType);
 
 // Upload CSV Guests
 router.post('/guests/upload', upload.single('file'), uploadGuestsCSV);
@@ -40,7 +41,7 @@ router.get('/guests/progress/:jobId', getUploadProgress);
 router.post('/concerts/:id/upload-bio', upload.single('file'), uploadConcertBioPDF);
 
 // Seating Map
-router.post('/concerts/:id/zones/:ticketTypeId/seating', saveSeatingMap);
+router.post('/concerts/:id/zones/:ticketTypeId/seating', validate(seatingMapSchema), saveSeatingMap);
 
 export default router;
 

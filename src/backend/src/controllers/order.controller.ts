@@ -2,9 +2,44 @@ import { Request, Response } from 'express';
 import crypto from 'crypto';
 import prisma from '../config/db';
 import redisClient from '../config/redis';
+import { taskQueue } from '../queue';
+import { paymentCircuitBreaker } from '../services/payment.service';
+import { Prisma } from '@prisma/client';
+import { EventEmitter } from 'events';
+
+// --- Singleton Redis Subscriber for SSE ---
+export const paymentEventEmitter = new EventEmitter();
+paymentEventEmitter.setMaxListeners(0); // Allow many concurrent users
+
+let isSubscribed = false;
+const ensurePaymentSubscriber = () => {
+    if (isSubscribed) return;
+    isSubscribed = true;
+    const subscriber = redisClient.duplicate();
+    subscriber.subscribe('payment_updates', (err) => {
+        if (err) {
+            console.error('Redis subscribe error:', err);
+            isSubscribed = false;
+        }
+    });
+
+    subscriber.on('message', (channel, message) => {
+        if (channel === 'payment_updates') {
+            try {
+                const data = JSON.parse(message);
+                if (data.orderId) {
+                    paymentEventEmitter.emit(`payment_update:${data.orderId}`, data);
+                }
+            } catch (err) {
+                console.error('SSE Message parsing error:', err);
+            }
+        }
+    });
+};
+// ------------------------------------------
 
 export const createOrder = async (req: Request, res: Response): Promise<void> => {
-    const idempotencyKey = (req as any).idempotencyKey;
+    const idempotencyKey = (req as Request & { idempotencyKey?: string }).idempotencyKey;
     const redisIdempKey = `idempotency:${idempotencyKey}`;
     const userId = req.user?.id;
     const { ticketTypeId, ticketIds } = req.body;
@@ -12,6 +47,13 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
     if (!userId || !ticketTypeId || !Array.isArray(ticketIds) || ticketIds.length === 0) {
         await redisClient.del(redisIdempKey); // allow retry
         res.status(400).json({ message: 'Invalid input' });
+        return;
+    }
+
+    // Circuit Breaker Fast-Fail: Chặn ngay nếu Cổng thanh toán đang sập (Mở mạch)
+    if (paymentCircuitBreaker.opened) {
+        await redisClient.del(redisIdempKey); // allow retry
+        res.status(503).json({ message: 'Cổng thanh toán đang bảo trì, vui lòng quay lại sau ít phút để tránh kẹt vé!' });
         return;
     }
 
@@ -49,14 +91,13 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
 
         // 3. Database Transaction
         try {
-            const result = await prisma.$transaction(async (tx: any) => {
+            const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
                 // Lock exact tickets
-                // Note: Prisma string interpolation in raw query
-                const tickets: any[] = await tx.$queryRawUnsafe(`
+                const tickets: { id: string, status: string }[] = await tx.$queryRaw`
                     SELECT id, status FROM tickets
-                    WHERE id IN (${ticketIds.map((id: string) => `'${id}'`).join(',')})
+                    WHERE id::text IN (${Prisma.join(ticketIds)})
                     FOR UPDATE SKIP LOCKED
-                `);
+                `;
 
                 if (tickets.length !== qty) {
                     throw new Error('Some tickets are already taken or invalid');
@@ -70,9 +111,9 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
                 // Create Order
                 const order = await tx.orders.create({
                     data: {
-                        user_id: userId,
+                        user_id: userId!,
                         status: 'PENDING',
-                        idempotency_key: idempotencyKey
+                        idempotency_key: idempotencyKey!
                     }
                 });
 
@@ -81,7 +122,7 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
                     where: { id: { in: ticketIds } },
                     data: {
                         status: 'RESERVED',
-                        user_id: userId,
+                        user_id: userId!,
                         order_id: order.id
                     }
                 });
@@ -89,9 +130,33 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
                 return order;
             });
 
-            const responseData = { orderId: result.id, ticketTypeId, quantity: qty };
+            const ticketTypeInfo = await prisma.ticket_types.findUnique({ where: { id: ticketTypeId }});
+            const totalAmount = (ticketTypeInfo?.price ? Number(ticketTypeInfo.price) : 0) * qty;
+            
+            let paymentUrl = '';
+            try {
+                // Gọi Circuit Breaker để sinh URL thanh toán thực sự
+                paymentUrl = await paymentCircuitBreaker.fire(result.id, totalAmount) as string;
+            } catch (circuitError: any) {
+                // Nếu Fire thất bại (vd: random 20% fail hoặc Circuit Open ngay lúc này)
+                console.warn('Payment gateway timeout/error:', circuitError.message);
+                // Vẫn cho phép tạo đơn (vì vé đã khóa), user có thể Retry thanh toán từ Dashboard
+            }
+
+            const responseData = { orderId: result.id, ticketTypeId, quantity: qty, paymentUrl };
             
             await redisClient.set(redisIdempKey, JSON.stringify({ status: 'SUCCESS', data: responseData }), 'EX', 86400); // 24h
+            
+            // Push Delayed Job để hủy đơn hàng sau 15 phút nếu chưa thanh toán
+            await taskQueue.add('cancel-expired-order', { orderId: result.id }, { delay: 15 * 60 * 1000 });
+            
+            // SSE: Notify map viewers
+            await redisClient.publish('seat_updates', JSON.stringify({
+                ticketTypeId,
+                ticketIds,
+                status: 'RESERVED'
+            }));
+            await redisClient.del(`zone_tickets:${ticketTypeId}`); // Clear cache for new viewers
             
             res.status(201).json({ message: 'Order created successfully', data: responseData });
 
@@ -154,7 +219,15 @@ export const getOrderById = async (req: Request, res: Response): Promise<void> =
         const order = await prisma.orders.findFirst({
             where: { id: id as string, user_id: userId },
             include: {
-                tickets: true
+                tickets: {
+                    include: {
+                        ticket_types: {
+                            include: {
+                                concerts: true
+                            }
+                        }
+                    }
+                }
             }
         });
 
@@ -169,3 +242,37 @@ export const getOrderById = async (req: Request, res: Response): Promise<void> =
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };
+
+// SSE Endpoint for tracking payment status
+export const streamOrderStatus = async (req: Request, res: Response): Promise<void> => {
+    const { id } = req.params;
+
+    // Set headers for SSE
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    // Send initial connection successful event
+    res.write(`data: ${JSON.stringify({ message: 'Connected to payment stream' })}\n\n`);
+
+    // Ensure the singleton Redis subscriber is running
+    ensurePaymentSubscriber();
+
+    const handleUpdate = (data: any) => {
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+        if (data.status === 'SUCCESS' || data.status === 'FAILED') {
+            paymentEventEmitter.off(`payment_update:${id}`, handleUpdate);
+            res.end();
+        }
+    };
+
+    // Listen to local event emitter instead of directly to Redis
+    paymentEventEmitter.on(`payment_update:${id}`, handleUpdate);
+
+    // Cleanup when client disconnects
+    req.on('close', () => {
+        paymentEventEmitter.off(`payment_update:${id}`, handleUpdate);
+    });
+};
+

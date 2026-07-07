@@ -66,6 +66,7 @@ model tickets {
 
   @@index([order_id], map: "idx_tickets_order_id")
   @@index([ticket_type_id], map: "idx_tickets_ticket_type_id")
+  @@index([ticket_type_id, status], map: "idx_tickets_type_status")
   @@index([user_id], map: "idx_tickets_user_id")
 }
 

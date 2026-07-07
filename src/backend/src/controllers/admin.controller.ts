@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../config/db';
+import { Prisma } from '@prisma/client';
 import redisClient from '../config/redis';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -107,6 +108,14 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
         const userId = req.user?.id;
         const isSuperAdmin = role === 'SUPER_ADMIN';
 
+        const cacheKey = `dashboard:stats:${role}:${userId}`;
+        const cachedStats = await redisClient.get(cacheKey);
+
+        if (cachedStats) {
+            res.json(JSON.parse(cachedStats));
+            return;
+        }
+
         const concertWhere = isSuperAdmin ? {} : { organizer_id: userId };
         const totalConcerts = await prisma.concerts.count({ where: concertWhere });
 
@@ -175,21 +184,26 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
             `;
         }
         
-        const totalTicketsSold = Number((ticketsQuery as any)[0]?.total || 0);
-        const totalRevenue = Number((revenueQuery as any)[0]?.total_revenue || 0);
+        const totalTicketsSold = Number((ticketsQuery as { total: bigint | number }[])[0]?.total || 0);
+        const totalRevenue = Number((revenueQuery as { total_revenue: number }[])[0]?.total_revenue || 0);
 
-        const chartData = (chartQuery as any[]).map(r => ({
+        const chartData = (chartQuery as { name: string, doanhThu: number, veBan: bigint | number }[]).map(r => ({
             name: r.name,
             doanhThu: Number(r.doanhThu),
             veBan: Number(r.veBan)
         }));
 
-        res.json({
+        const responseData = {
             totalConcerts,
             totalTicketsSold,
             totalRevenue,
             chartData
-        });
+        };
+
+        // Cache for 5 minutes (300 seconds)
+        await redisClient.set(cacheKey, JSON.stringify(responseData), 'EX', 300);
+
+        res.json(responseData);
     } catch (error) {
         console.error('Error fetching dashboard stats:', error);
         res.status(500).json({ message: 'Internal Server Error' });
@@ -210,7 +224,7 @@ export const uploadGuestsCSV = async (req: Request, res: Response): Promise<void
             return;
         }
 
-        const results: any[] = [];
+        const results: Record<string, unknown>[] = [];
         fs.createReadStream(file.path)
             .pipe(csv())
             .on('data', (data) => results.push(data))
@@ -286,24 +300,8 @@ export const saveSeatingMap = async (req: Request, res: Response): Promise<void>
             return;
         }
 
-        const soldTickets = await prisma.tickets.count({
-            where: {
-                ticket_type_id: ticketTypeId,
-                status: { in: ['RESERVED', 'SOLD', 'CHECKED_IN'] }
-            }
-        });
-
-        if (soldTickets > 0) {
-            res.status(400).json({ message: 'Cannot modify seating map after tickets are sold' });
-            return;
-        }
-
-        await prisma.tickets.deleteMany({
-            where: { ticket_type_id: ticketTypeId }
-        });
-
         const disabledSet = new Set(disabledSeats);
-        const ticketsToInsert = [];
+        const ticketsToInsert: { ticket_type_id: string, seat_label: string, status: string, qr_code: string }[] = [];
 
         const getRowLabel = (index: number) => {
             let label = '';
@@ -330,29 +328,50 @@ export const saveSeatingMap = async (req: Request, res: Response): Promise<void>
             }
         }
 
-        if (ticketsToInsert.length > 0) {
-            await prisma.tickets.createMany({
-                data: ticketsToInsert
+        await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+            // Row-level lock on ticket_types to prevent concurrent order creation or another map save
+            await tx.$queryRaw`SELECT id FROM ticket_types WHERE id = ${ticketTypeId}::uuid FOR UPDATE`;
+
+            const soldTickets = await tx.tickets.count({
+                where: {
+                    ticket_type_id: ticketTypeId,
+                    status: { in: ['RESERVED', 'SOLD', 'CHECKED_IN'] }
+                }
             });
-        }
 
-        await prisma.ticket_types.update({
-            where: { id: ticketTypeId },
-            data: { total_quantity: ticketsToInsert.length }
-        });
+            if (soldTickets > 0) {
+                throw new Error('Cannot modify seating map after tickets are sold');
+            }
 
-        let currentMap: any = ticketType.concerts?.seating_map || {};
-        if (typeof currentMap !== 'object') currentMap = {};
-        
-        currentMap[ticketTypeId] = {
-            rows,
-            cols,
-            disabledSeats
-        };
+            // Only delete available tickets to prevent accidental data loss of reserved tickets
+            await tx.tickets.deleteMany({
+                where: { ticket_type_id: ticketTypeId, status: 'AVAILABLE' }
+            });
 
-        await prisma.concerts.update({
-            where: { id: id },
-            data: { seating_map: currentMap }
+            if (ticketsToInsert.length > 0) {
+                await tx.tickets.createMany({
+                    data: ticketsToInsert
+                });
+            }
+
+            await tx.ticket_types.update({
+                where: { id: ticketTypeId },
+                data: { total_quantity: ticketsToInsert.length }
+            });
+
+            let currentMap: Record<string, any> = (ticketType.concerts?.seating_map as Record<string, any>) || {};
+            if (typeof currentMap !== 'object') currentMap = {};
+            
+            currentMap[ticketTypeId] = {
+                rows,
+                cols,
+                disabledSeats
+            };
+
+            await tx.concerts.update({
+                where: { id: id },
+                data: { seating_map: currentMap }
+            });
         });
 
         await redisClient.del(`concerts:detail:${id}`);
@@ -362,8 +381,12 @@ export const saveSeatingMap = async (req: Request, res: Response): Promise<void>
             total_seats: ticketsToInsert.length 
         });
 
-    } catch (error) {
+    } catch (error: unknown) {
         console.error('Error saving seating map:', error);
+        if (error instanceof Error && error.message === 'Cannot modify seating map after tickets are sold') {
+            res.status(400).json({ message: error.message });
+            return;
+        }
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };
@@ -434,13 +457,13 @@ export const uploadConcertBioPDF = async (req: Request, res: Response): Promise<
                 );
 
                 if (response.ok) {
-                    const resData: any = await response.json();
+                    const resData = await response.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
                     bio = resData?.candidates?.[0]?.content?.parts?.[0]?.text || '';
                 } else {
                     console.error('[AI Artist Bio] Gemini API trả về trạng thái lỗi:', response.status);
                 }
-            } catch (aiError: any) {
-                console.error('[AI Artist Bio] Gemini API gặp sự cố, chuyển sang Fallback:', aiError.message);
+            } catch (aiError: unknown) {
+                console.error('[AI Artist Bio] Gemini API gặp sự cố, chuyển sang Fallback:', aiError instanceof Error ? aiError.message : String(aiError));
             }
         }
 
