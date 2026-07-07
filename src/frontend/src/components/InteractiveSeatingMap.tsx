@@ -4,7 +4,7 @@ import axios from 'axios';
 interface TicketCell {
   id: string;
   seat_label: string;
-  status: 'AVAILABLE' | 'RESERVED' | 'SOLD' | 'CHECKED_IN';
+  status: 'AVAILABLE' | 'RESERVED' | 'SOLD' | 'CHECKED_IN' | 'HOLDING';
 }
 
 interface Props {
@@ -16,7 +16,7 @@ interface Props {
     disabledSeats: string[];
   };
   selectedTicketIds: string[];
-  onToggleSeat: (ticketId: string, seatLabel: string) => void;
+  onToggleSeat: (ticketId: string, seatLabel: string) => void | Promise<void>;
   maxPerUser: number;
 }
 
@@ -37,10 +37,12 @@ export default function InteractiveSeatingMap({
 
   useEffect(() => {
     let active = true;
+    let eventSource: EventSource | null = null;
+
     const fetchTickets = async () => {
       setLoading(true);
       try {
-        const res = await axios.get(`http://localhost:3001/api/concerts/${concertId}/zones/${ticketTypeId}/tickets`);
+        const res = await axios.get(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/concerts/${concertId}/zones/${ticketTypeId}/tickets`);
         if (active) {
           setTickets(res.data);
           setLoading(false);
@@ -50,13 +52,32 @@ export default function InteractiveSeatingMap({
         if (active) setLoading(false);
       }
     };
-    fetchTickets();
-    
-    // Poll every 5s to keep status fresh
-    const interval = setInterval(fetchTickets, 5000);
+
+    fetchTickets().then(() => {
+      if (!active) return;
+      
+      // Setup SSE for real-time updates after initial fetch
+      eventSource = new EventSource(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/concerts/${concertId}/zones/${ticketTypeId}/stream-tickets`);
+      
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.ticketTypeId === ticketTypeId && Array.isArray(data.ticketIds)) {
+            setTickets(prev => prev.map(t => 
+              data.ticketIds.includes(t.id) ? { ...t, status: data.status } : t
+            ));
+          }
+        } catch (error) {
+          console.error('Error parsing seat update', error);
+        }
+      };
+    });
+
     return () => {
       active = false;
-      clearInterval(interval);
+      if (eventSource) {
+        eventSource.close();
+      }
     };
   }, [concertId, ticketTypeId]);
 
@@ -87,6 +108,7 @@ export default function InteractiveSeatingMap({
       <div className="text-xs text-slate-400 mb-6 flex flex-wrap gap-4 justify-center">
         <span className="flex items-center gap-2"><div className="w-5 h-5 bg-emerald-500 rounded"></div> Trống</span>
         <span className="flex items-center gap-2"><div className="w-5 h-5 bg-rose-500 rounded"></div> Đang chọn</span>
+        <span className="flex items-center gap-2"><div className="w-5 h-5 bg-amber-500 rounded"></div> Đang giữ</span>
         <span className="flex items-center gap-2"><div className="w-5 h-5 bg-slate-600 rounded"></div> Đã bán</span>
       </div>
 
@@ -126,6 +148,8 @@ export default function InteractiveSeatingMap({
                   let bgClass = "bg-slate-600 text-slate-400 cursor-not-allowed"; // SOLD
                   if (isSelected) {
                     bgClass = "bg-rose-500 text-white shadow-lg shadow-rose-500/50 scale-110 z-10";
+                  } else if (ticket.status === 'HOLDING') {
+                    bgClass = "bg-amber-500 text-amber-900 cursor-not-allowed"; // HOLDING
                   } else if (isAvailable) {
                     bgClass = "bg-emerald-500 text-white hover:bg-emerald-400 cursor-pointer";
                   }

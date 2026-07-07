@@ -35,7 +35,7 @@ export default function AdminConcerts() {
 
   const fetchConcerts = async () => {
     try {
-      const res = await axios.get('http://localhost:3001/api/admin/concerts', {
+      const res = await axios.get(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/concerts`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setConcerts(res.data);
@@ -54,11 +54,11 @@ export default function AdminConcerts() {
     e.preventDefault();
     try {
       if (currentConcert) {
-        await axios.put(`http://localhost:3001/api/admin/concerts/${currentConcert.id}`, formData, {
+        await axios.put(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/concerts/${currentConcert.id}`, formData, {
           headers: { Authorization: `Bearer ${token}` }
         });
       } else {
-        await axios.post('http://localhost:3001/api/admin/concerts', formData, {
+        await axios.post(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/concerts`, formData, {
           headers: { Authorization: `Bearer ${token}` }
         });
       }
@@ -72,7 +72,7 @@ export default function AdminConcerts() {
   const handleSaveTicketType = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await axios.post('http://localhost:3001/api/admin/ticket-types', {
+      await axios.post(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/ticket-types`, {
         concert_id: activeConcertId,
         ...ticketData
       }, {
@@ -106,7 +106,7 @@ export default function AdminConcerts() {
 
     try {
       const res = await axios.post(
-        `http://localhost:3001/api/admin/concerts/${activeConcert.id}/upload-bio`,
+        `\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/concerts/${activeConcert.id}/upload-bio`,
         bioFormData,
         {
           headers: {

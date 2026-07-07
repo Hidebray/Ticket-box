@@ -1,20 +1,20 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
-import { Clock, Wallet, ShieldCheck } from 'lucide-react';
+import { Clock, Wallet, ShieldCheck, Tag } from 'lucide-react';
 
 export default function Checkout() {
   const { id } = useParams(); // orderId
   const { token, user } = useAuth();
   const navigate = useNavigate();
-  
+
   const [order, setOrder] = useState<any>(null);
+  const [ticketPrice, setTicketPrice] = useState<number>(0);
   const [timeLeft, setTimeLeft] = useState(15 * 60); // 15 minutes in seconds
   const [isProcessing, setIsProcessing] = useState(false);
   const [loading, setLoading] = useState(true);
-  
-  const pollingInterval = useRef<any>(null);
 
   // 1. Fetch Order
   useEffect(() => {
@@ -25,18 +25,23 @@ export default function Checkout() {
 
     const fetchOrder = async () => {
       try {
-        const res = await axios.get(`http://localhost:3001/api/orders/${id}`, {
+        const res = await axios.get(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/orders/${id}`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         setOrder(res.data);
-        
+
+        // Lấy giá vé từ ticket_type nếu có (order phải include ticket_types)
+        if (res.data.tickets?.length > 0 && res.data.tickets[0]?.ticket_types?.price) {
+          setTicketPrice(Number(res.data.tickets[0].ticket_types.price));
+        }
+
         // Cập nhật lại thời gian đếm ngược thực tế từ created_at
         const createdAt = new Date(res.data.created_at).getTime();
         const now = Date.now();
         const diffSeconds = Math.floor((15 * 60 * 1000 - (now - createdAt)) / 1000);
-        
+
         if (diffSeconds <= 0 || res.data.status === 'FAILED') {
-          alert('Đơn hàng đã hết hạn hoặc bị hủy!');
+          toast.error('Đơn hàng đã hết hạn hoặc bị hủy!');
           navigate('/');
         } else if (res.data.status === 'SUCCESS') {
           navigate('/dashboard');
@@ -46,7 +51,7 @@ export default function Checkout() {
         }
       } catch (err) {
         console.error(err);
-        alert('Không tìm thấy đơn hàng');
+        toast.error('Không tìm thấy đơn hàng');
         navigate('/');
       }
     };
@@ -62,7 +67,7 @@ export default function Checkout() {
       setTimeLeft(prev => {
         if (prev <= 1) {
           clearInterval(timer);
-          alert('Hết thời gian giữ vé!');
+          toast.error('Hết thời gian giữ vé! Đơn hàng đã bị hủy.');
           navigate('/');
           return 0;
         }
@@ -73,43 +78,59 @@ export default function Checkout() {
     return () => clearInterval(timer);
   }, [loading, timeLeft, navigate]);
 
-  // 3. Polling Webhook (Nếu đang xử lý thanh toán)
+  // 3. SSE Webhook Listening (thay thế polling)
   useEffect(() => {
-    if (!isProcessing) return;
+    if (!isProcessing || !id) return;
 
-    pollingInterval.current = setInterval(async () => {
+    const eventSource = new EventSource(
+      `${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/orders/stream/${id}`
+    );
+
+    eventSource.onmessage = (event) => {
       try {
-        const res = await axios.get(`http://localhost:3001/api/orders/${id}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (res.data.status === 'SUCCESS') {
-          clearInterval(pollingInterval.current);
-          alert('Thanh toán thành công! Vé đã được chuyển vào Ví của bạn.');
-          navigate('/dashboard');
+        const data = JSON.parse(event.data);
+        if (data.status === 'SUCCESS') {
+          eventSource.close();
+          toast.success('🎫 Thanh toán thành công! Vé đã được chuyển vào Ví của bạn.');
+          setTimeout(() => navigate('/dashboard'), 1500);
+        } else if (data.status === 'FAILED') {
+          eventSource.close();
+          toast.error('Thanh toán thất bại hoặc quá hạn!');
+          navigate('/');
         }
       } catch (error) {
-        console.error('Polling error', error);
+        console.error('Error parsing SSE data', error);
       }
-    }, 3000); // Poll mỗi 3 giây
+    };
 
-    return () => clearInterval(pollingInterval.current);
-  }, [isProcessing, id, token, navigate]);
+    eventSource.onerror = () => {
+      console.error('SSE connection error');
+      eventSource.close();
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, [isProcessing, id, navigate]);
 
   const handlePayment = async () => {
     setIsProcessing(true);
-    
-    // Lưu ý: Đây là nơi gọi API tạo Payment URL từ VNPAY/MoMo SDK.
-    // Vì chưa có Secret Keys thật, hệ thống tạm mô phỏng việc gọi Webhook báo thành công sau 2s.
+
+    // Gọi API mock — trong production sẽ redirect tới URL của cổng thanh toán thật
     setTimeout(async () => {
       try {
-        await axios.post('http://localhost:3001/api/webhooks/payment', {
-          orderId: id,
-          status: 'SUCCESS'
-        });
-        // Webhook gọi thành công, cơ chế Polling sẽ bắt được state SUCCESS và tự redirect
+        const toastId = toast.loading('Đang kết nối cổng thanh toán...');
+        const payload = { orderId: id, status: 'SUCCESS' };
+
+        await axios.post(
+          `${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/webhooks/mock-payment`,
+          payload
+        );
+        toast.dismiss(toastId);
+        // SSE sẽ nhận state SUCCESS và tự redirect
       } catch (err) {
-        console.error('Webhook failed', err);
-        alert('Có lỗi khi xử lý thanh toán!');
+        console.error('Mock payment failed', err);
+        toast.error('Có lỗi khi xử lý thanh toán! Vui lòng thử lại.');
         setIsProcessing(false);
       }
     }, 2000);
@@ -121,7 +142,12 @@ export default function Checkout() {
     return `${m}:${s}`;
   };
 
-  if (loading) return <div className="min-h-screen pt-32 text-center">Đang tải...</div>;
+  // [UX-02] Tính tổng tiền
+  const totalAmount = order?.tickets?.length && ticketPrice
+    ? ticketPrice * order.tickets.length
+    : null;
+
+  if (loading) return <div className="min-h-screen pt-32 text-center animate-pulse">Đang tải...</div>;
 
   return (
     <div className="pt-32 min-h-screen pb-24 px-6 max-w-4xl mx-auto">
@@ -129,7 +155,11 @@ export default function Checkout() {
         {/* Header */}
         <div className="text-center mb-10">
           <h1 className="text-3xl font-bold mb-4">Thanh toán Đơn hàng</h1>
-          <div className="inline-flex items-center gap-3 bg-red-500/10 text-red-400 px-6 py-3 rounded-full font-mono text-xl font-bold border border-red-500/30">
+          <div className={`inline-flex items-center gap-3 px-6 py-3 rounded-full font-mono text-xl font-bold border transition-colors ${
+            timeLeft <= 60
+              ? 'bg-red-500/20 text-red-400 border-red-500/50 animate-pulse'
+              : 'bg-red-500/10 text-red-400 border-red-500/30'
+          }`}>
             <Clock className="w-6 h-6 animate-pulse" />
             {formatTime(timeLeft)}
           </div>
@@ -163,10 +193,30 @@ export default function Checkout() {
                   </span>
                 </div>
               )}
+
+              {/* [UX-02] Price Breakdown */}
+              {totalAmount !== null && (
+                <div className="mt-6 pt-4 border-t border-slate-700 space-y-2">
+                  <div className="flex justify-between text-slate-300 text-sm">
+                    <span className="flex items-center gap-1.5">
+                      <Tag className="w-4 h-4" />Đơn giá:
+                    </span>
+                    <span>{ticketPrice.toLocaleString('vi-VN')}đ / vé</span>
+                  </div>
+                  <div className="flex justify-between text-slate-300 text-sm">
+                    <span>Số lượng:</span>
+                    <span>× {order?.tickets?.length}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-lg font-bold mt-3 pt-3 border-t border-slate-600">
+                    <span>Tổng cộng:</span>
+                    <span className="text-primary text-2xl">{totalAmount.toLocaleString('vi-VN')}đ</span>
+                  </div>
+                </div>
+              )}
             </div>
 
             {isProcessing && (
-              <div className="mt-8 p-6 bg-slate-800/80 rounded-xl border border-primary/50 text-center animate-pulse">
+              <div className="mt-8 p-6 bg-slate-800/80 rounded-xl border border-primary/50 text-center">
                 <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
                 <p className="text-primary font-bold">Đang chờ xác nhận thanh toán...</p>
                 <p className="text-sm text-slate-400 mt-2">Vui lòng không đóng trình duyệt.</p>
@@ -179,9 +229,9 @@ export default function Checkout() {
             <h2 className="text-xl font-bold mb-6 flex items-center border-b border-slate-700 pb-4">
               <Wallet className="w-5 h-5 mr-2 text-primary" /> Chọn phương thức
             </h2>
-            
+
             <div className="space-y-4">
-              <button 
+              <button
                 onClick={() => handlePayment()}
                 className="w-full flex items-center justify-between p-4 rounded-xl border-2 border-slate-600 hover:border-blue-500 hover:bg-blue-500/10 transition-all group"
               >
@@ -196,7 +246,7 @@ export default function Checkout() {
                 </div>
               </button>
 
-              <button 
+              <button
                 onClick={() => handlePayment()}
                 className="w-full flex items-center justify-between p-4 rounded-xl border-2 border-slate-600 hover:border-pink-500 hover:bg-pink-500/10 transition-all group"
               >

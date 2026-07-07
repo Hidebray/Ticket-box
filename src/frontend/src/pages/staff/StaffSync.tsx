@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { db } from '../../utils/db';
-import { CloudDownload, CloudUpload, CheckCircle, Database } from 'lucide-react';
+import { CloudDownload, CloudUpload, Database } from 'lucide-react';
 
 export default function StaffSync() {
   const { token } = useAuth();
@@ -14,7 +14,7 @@ export default function StaffSync() {
 
   useEffect(() => {
     // Load concerts for selection
-    axios.get('http://localhost:3001/api/concerts')
+    axios.get(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/concerts`)
       .then(res => {
         setConcerts(res.data);
         if (res.data.length > 0) setSelectedConcert(res.data[0].id);
@@ -44,7 +44,7 @@ export default function StaffSync() {
     setStatusMsg({ type: 'info', text: 'Đang tải dữ liệu vé...' });
 
     try {
-      const res = await axios.get(`http://localhost:3001/api/checkin/sync-down?concertId=${selectedConcert}`, {
+      const res = await axios.get(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/checkin/sync-down?concertId=${selectedConcert}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
@@ -79,7 +79,7 @@ export default function StaffSync() {
         return;
       }
 
-      const res = await axios.post('http://localhost:3001/api/checkin/sync-up', {
+      await axios.post(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/checkin/sync-up`, {
         scannedTickets: queueItems
       }, {
         headers: { Authorization: `Bearer ${token}` }

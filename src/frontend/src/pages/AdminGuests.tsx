@@ -22,7 +22,7 @@ export default function AdminGuests() {
     // Fetch concerts and their ticket types to populate dropdowns
     const fetchConcerts = async () => {
       try {
-        const res = await axios.get('http://localhost:3001/api/admin/concerts', {
+        const res = await axios.get(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/concerts`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         setConcerts(res.data);
@@ -61,7 +61,7 @@ export default function AdminGuests() {
     formData.append('ticketTypeId', selectedTicketTypeId);
 
     try {
-      const res = await axios.post('http://localhost:3001/api/admin/guests/upload', formData, {
+      const res = await axios.post(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/guests/upload`, formData, {
         headers: { 
           Authorization: `Bearer ${token}`,
           'Content-Type': 'multipart/form-data'
@@ -81,7 +81,7 @@ export default function AdminGuests() {
 
     pollingInterval.current = setInterval(async () => {
       try {
-        const res = await axios.get(`http://localhost:3001/api/admin/guests/progress/${jobId}`, {
+        const res = await axios.get(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/guests/progress/${jobId}`, {
           headers: { Authorization: `Bearer ${token}` }
         });
 

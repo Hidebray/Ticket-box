@@ -60,7 +60,7 @@ export default function StaffScanner() {
     }
   };
 
-  const onScanFailure = (error: any) => {
+  const onScanFailure = (_error: any) => {
     // Usually ignoring normal frame read errors
   };
 

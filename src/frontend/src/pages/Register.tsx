@@ -20,10 +20,10 @@ export default function Register() {
 
     try {
       // 1. Đăng ký
-      await axios.post('http://localhost:3001/api/auth/register', { email, password, role });
+      await axios.post(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/auth/register`, { email, password, role });
       
       // 2. Tự động Login sau khi đăng ký thành công
-      const loginRes = await axios.post('http://localhost:3001/api/auth/login', { email, password });
+      const loginRes = await axios.post(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/auth/login`, { email, password });
       login(loginRes.data.token, loginRes.data.user);
       
       const loggedInRole = loginRes.data.user.role;

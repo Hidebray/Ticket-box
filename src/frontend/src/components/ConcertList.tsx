@@ -18,7 +18,7 @@ export default function ConcertList() {
 
   useEffect(() => {
     // Fetch concerts from backend
-    axios.get('http://localhost:3001/api/concerts')
+    axios.get(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/concerts`)
       .then(res => {
         setConcerts(res.data);
         setLoading(false);

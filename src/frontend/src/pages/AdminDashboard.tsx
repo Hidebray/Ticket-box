@@ -14,7 +14,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const res = await axios.get('http://localhost:3001/api/admin/dashboard', {
+        const res = await axios.get(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/dashboard`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         setStats(res.data);

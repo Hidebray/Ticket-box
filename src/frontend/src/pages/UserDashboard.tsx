@@ -18,7 +18,7 @@ export default function UserDashboard() {
       return;
     }
 
-    axios.get('http://localhost:3001/api/orders/my-tickets', {
+    axios.get(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/orders/my-tickets`, {
       headers: { Authorization: `Bearer ${token}` }
     })
     .then(res => {

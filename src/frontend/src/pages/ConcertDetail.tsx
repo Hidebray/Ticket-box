@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import toast from 'react-hot-toast';
 import { CalendarDays, MapPin, Ticket, AlertCircle } from 'lucide-react';
 import InteractiveSeatingMap from '../components/InteractiveSeatingMap';
 import { useAuth } from '../contexts/AuthContext';
@@ -31,8 +32,8 @@ export default function ConcertDetail() {
   const { user } = useAuth();
   const [concert, setConcert] = useState<Concert | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [selectedType, setSelectedType] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [selectedTypeId, setSelectedTypeId] = useState<string | null>(null); // [BUG-01] Dùng ID thay vì name
   const [selectedTicketIds, setSelectedTicketIds] = useState<string[]>([]);
   const [selectedSeatLabels, setSelectedSeatLabels] = useState<string[]>([]);
 
@@ -40,7 +41,7 @@ export default function ConcertDetail() {
     // Scroll to top
     window.scrollTo(0, 0);
     
-    axios.get(`http://localhost:3001/api/concerts/${id}`)
+    axios.get(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/concerts/${id}`)
       .then(res => {
         setConcert(res.data);
         setLoading(false);
@@ -80,9 +81,9 @@ export default function ConcertDetail() {
   const formattedDate = dateObj.toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   const time = dateObj.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
-  // Get selected ticket object
-  const selectedTicketObj = selectedType 
-    ? concert.ticket_types.find(t => selectedType.includes(t.name) || t.name.includes(selectedType)) 
+  // [BUG-01] Tìm ticket object bằng UUID, không phải tên
+  const selectedTicketObj = selectedTypeId
+    ? concert.ticket_types.find(t => t.id === selectedTypeId)
     : null;
 
   return (
@@ -130,20 +131,46 @@ export default function ConcertDetail() {
                 mapConfig={(concert.seating_map as any)[selectedTicketObj.id]}
                 selectedTicketIds={selectedTicketIds}
                 maxPerUser={selectedTicketObj.max_per_user || 1}
-                onToggleSeat={(ticketId, seatLabel) => {
-                  setSelectedTicketIds(prev => {
-                    if (prev.includes(ticketId)) return prev.filter(id => id !== ticketId);
-                    return [...prev, ticketId];
-                  });
-                  setSelectedSeatLabels(prev => {
-                    if (prev.includes(seatLabel)) return prev.filter(label => label !== seatLabel);
-                    return [...prev, seatLabel];
-                  });
+                onToggleSeat={async (ticketId, seatLabel) => {
+                  if (!user) {
+                    toast.error('Vui lòng đăng nhập để chọn ghế');
+                    navigate('/login');
+                    return;
+                  }
+
+                  const isSelecting = !selectedTicketIds.includes(ticketId);
+                  
+                  try {
+                    if (isSelecting) {
+                      await axios.post(
+                        `\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/concerts/${concert.id}/zones/${selectedTicketObj.id}/tickets/${ticketId}/hold`,
+                        {},
+                        { headers: { Authorization: `Bearer \${localStorage.getItem('token')}` } }
+                      );
+                    } else {
+                      await axios.post(
+                        `\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/concerts/${concert.id}/zones/${selectedTicketObj.id}/tickets/${ticketId}/unhold`,
+                        {},
+                        { headers: { Authorization: `Bearer \${localStorage.getItem('token')}` } }
+                      );
+                    }
+                    
+                    setSelectedTicketIds(prev => {
+                      if (prev.includes(ticketId)) return prev.filter(id => id !== ticketId);
+                      return [...prev, ticketId];
+                    });
+                    setSelectedSeatLabels(prev => {
+                      if (prev.includes(seatLabel)) return prev.filter(label => label !== seatLabel);
+                      return [...prev, seatLabel];
+                    });
+                  } catch (error: any) {
+                    toast.error(error.response?.data?.message || 'Không thể chọn ghế này, có thể ai đó đã nhanh tay hơn!');
+                  }
                 }}
               />
             ) : (
               <div className="p-10 text-center bg-slate-800 rounded-xl border border-dashed border-slate-600 text-slate-400">
-                {selectedType ? 'Khu vực này không có thiết lập sơ đồ ghế chính xác.' : 'Vui lòng chọn 1 hạng vé ở danh sách bên phải để xem sơ đồ.'}
+                {selectedTypeId ? 'Khu vực này không có thiết lập sơ đồ ghế chính xác.' : 'Vui lòng chọn 1 hạng vé ở danh sách bên phải để xem sơ đồ.'}
               </div>
             )}
           </section>
@@ -160,14 +187,14 @@ export default function ConcertDetail() {
                 <div 
                   key={ticket.id}
                   onClick={() => {
-                    if (selectedType !== ticket.name) {
-                      setSelectedType(ticket.name);
+                    if (selectedTypeId !== ticket.id) {
+                      setSelectedTypeId(ticket.id);
                       setSelectedTicketIds([]);
                       setSelectedSeatLabels([]);
                     }
                   }}
                   className={`relative p-5 rounded-xl border-2 cursor-pointer transition-all duration-300 ${
-                    (selectedType && (selectedType.includes(ticket.name) || ticket.name.includes(selectedType)))
+                    selectedTypeId === ticket.id
                       ? 'border-primary bg-primary/10 shadow-[0_0_15px_rgba(244,63,94,0.2)]'
                       : 'border-slate-700 bg-slate-800/50 hover:border-slate-500'
                   }`}
@@ -214,7 +241,7 @@ export default function ConcertDetail() {
                 if (!selectedTicketObj) return;
 
                 if (selectedTicketIds.length === 0) {
-                  alert('Vui lòng chọn ít nhất 1 ghế trên sơ đồ!');
+                  toast.error('Vui lòng chọn ít nhất 1 ghế trên sơ đồ!');
                   return;
                 }
 
@@ -224,7 +251,7 @@ export default function ConcertDetail() {
 
                 try {
                   const res = await axios.post(
-                    'http://localhost:3001/api/orders', 
+                    `\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/orders`, 
                     {
                       ticketTypeId: selectedTicketObj.id,
                       ticketIds: selectedTicketIds
@@ -241,10 +268,10 @@ export default function ConcertDetail() {
                   
                 } catch (error: any) {
                   if (error.response?.status === 429) {
-                    alert('Hệ thống đang rất đông, vui lòng không tải lại trang, chúng tôi đang xử lý yêu cầu của bạn...');
+                    toast.error('Hệ thống đang rất đông, vui lòng không tải lại trang...');
                     setTimeout(() => setIsSubmitting(false), 3000);
                   } else {
-                    alert(error.response?.data?.message || 'Có lỗi xảy ra khi tạo đơn hàng!');
+                    toast.error(error.response?.data?.message || 'Có lỗi xảy ra khi tạo đơn hàng!');
                     setIsSubmitting(false);
                   }
                 }

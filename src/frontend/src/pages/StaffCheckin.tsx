@@ -40,7 +40,7 @@ export default function StaffCheckin() {
   // 2. Fetch danh sách sự kiện
   useEffect(() => {
     if (isOnline) {
-      axios.get('http://localhost:3001/api/concerts')
+      axios.get(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/concerts`)
         .then(res => setConcerts(res.data))
         .catch(err => console.error(err));
     }
@@ -75,7 +75,7 @@ export default function StaffCheckin() {
     
     setIsSyncingDown(true);
     try {
-      const res = await axios.get(`http://localhost:3001/api/checkin/sync-down?concertId=${selectedConcertId}`, {
+      const res = await axios.get(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/checkin/sync-down?concertId=${selectedConcertId}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       
@@ -105,7 +105,7 @@ export default function StaffCheckin() {
       const queue: any[] = (await get(`sync_queue_${selectedConcertId}`)) || [];
       if (queue.length === 0) return;
 
-      const res = await axios.post(`http://localhost:3001/api/checkin/sync-up`, {
+      const res = await axios.post(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/checkin/sync-up`, {
         scannedTickets: queue
       }, {
         headers: { Authorization: `Bearer ${token}` }
