@@ -22,6 +22,26 @@ export const taskWorker = new Worker('task-queue', async (job: Job) => {
             await new Promise(resolve => setTimeout(resolve, 1000));
             console.log(`[Worker] Email sent to ${job.data.email}`);
             break;
+        case 'cancel-expired-order':
+            console.log(`[Worker] Checking expired order ${job.data.orderId}...`);
+            const { cancelExpiredOrderJob } = require('../workers/order-expiry.worker');
+            await cancelExpiredOrderJob(job.data.orderId);
+            break;
+        case 'reconcile-tickets':
+            console.log(`[Worker] Reconciling ticket quantities...`);
+            const { syncRedisCounters } = require('../workers/order-expiry.worker');
+            await syncRedisCounters();
+            break;
+        case 'send-pre-event-reminders':
+            console.log(`[Worker] Checking pre-event reminders...`);
+            const { sendPreEventReminders } = require('../workers/order-expiry.worker');
+            await sendPreEventReminders();
+            break;
+        case 'sweep-orphaned-orders':
+            console.log(`[Worker] Sweeping orphaned pending orders...`);
+            const { sweepOrphanedOrders } = require('../workers/order-expiry.worker');
+            await sweepOrphanedOrders();
+            break;
         default:
             console.log(`[Worker] Unknown job type: ${job.name}`);
     }
