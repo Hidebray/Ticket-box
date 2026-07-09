@@ -16,7 +16,7 @@ C4Context
   System(ticketbox, "TicketBox System", "Nền tảng quản lý và phân phối vé sự kiện toàn diện.")
 
   System_Ext(payment, "Cổng thanh toán (VNPAY/MoMo)", "Xử lý giao dịch thanh toán.")
-  System_Ext(ai_model, "AI Model Service", "Tạo Artist Bio tự động từ PDF.")
+  System_Ext(ai_model, "Gemini 2.5 Flash API", "Tạo Artist Bio tự động từ PDF.")
   System_Ext(sponsor, "Hệ thống Nhãn hàng", "Cung cấp danh sách khách mời (CSV) định kỳ.")
 
   Rel(audience, ticketbox, "Xem, mua vé, nhận E-ticket")

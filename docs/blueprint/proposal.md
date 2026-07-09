@@ -16,7 +16,7 @@ Xây dựng nền tảng TicketBox hiện đại, giải quyết triệt để c
 
 ## 3. Đối tượng người dùng và Nhu cầu
 - **Khán giả (End Users):** Cần một nền tảng mượt mà, minh bạch để xem thông tin concert, sơ đồ ghế, mua vé nhanh chóng và nhận e-ticket (QR code).
-- **Ban tổ chức (Event Organizers):** Cần hệ thống CMS quản trị để tạo concert, định giá, mở bán vé, xem báo cáo doanh thu realtime và tích hợp AI tạo bio nghệ sĩ, quản lý khách mời VIP qua file CSV.
+- **Ban tổ chức (Event Organizers):** Cần hệ thống CMS quản trị để tạo concert, định giá, mở bán vé, xem báo cáo doanh thu realtime và tích hợp Gemini 2.5 Flash AI tạo bio nghệ sĩ, quản lý khách mời VIP qua file CSV.
 - **Nhân sự soát vé (Staff):** Cần ứng dụng di động để quét QR code nhanh chóng tại sự kiện, kể cả trong điều kiện mạng chập chờn hoặc không có mạng (Offline Check-in).
 
 ## 4. Rủi ro và Ràng buộc

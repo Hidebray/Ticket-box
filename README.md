@@ -155,3 +155,17 @@ Hệ thống được thiết kế chặt chẽ với nhiều Role. Dưới đâ
   2. Ở trình duyệt 1, click chọn 1 ghế. Ghế đó sẽ lập tức chuyển màu Cam (Đang giữ) ở trình duyệt 2.
   3. Trình duyệt 2 không thể click vào ghế đó. Nếu trình duyệt 1 bỏ chọn, ghế trả về màu Xanh (Trống).
   4. Nếu dùng tool hoặc click liên tục vào nút Mua vé quá 5 lần/phút, hệ thống sẽ chặn bằng lỗi `429 Too Many Requests`.
+
+### Kịch bản 8: Xử lý hàng đợi Background (Nhập danh sách VIP bằng CSV)
+- **Mục tiêu**: Đảm bảo hệ thống BullMQ và Redis xử lý ngầm các file dữ liệu lớn mà không làm treo server.
+- **Thực hiện**:
+  1. Ở trang Quản lý Khách mời, chọn tính năng Import CSV.
+  2. Tải lên một file `.csv` chứa hàng trăm dòng email và thông tin khách mời VIP.
+  3. Hệ thống trả về `jobId` ngay lập tức. Cột trạng thái trên UI sẽ tự động polling/cập nhật thanh tiến trình (Progress) cho đến khi hoàn tất 100%.
+
+### Kịch bản 9: Tích hợp AI (Tạo Tiểu Sử Nghệ Sĩ Tự Động)
+- **Mục tiêu**: Xác minh khả năng đọc file PDF và tự động viết nội dung mô tả bằng Gemini 2.5 Flash AI (hoặc Intelligent Fallback).
+- **Thực hiện**:
+  1. Ở trang Tạo/Chỉnh sửa Sự kiện, chọn tải lên Press Kit (file `.pdf`).
+  2. Hệ thống trích xuất văn bản từ PDF và gọi AI.
+  3. Form mô tả tự động được điền một đoạn văn 100-150 từ hấp dẫn, tóm tắt chính xác nội dung file vừa tải lên.
