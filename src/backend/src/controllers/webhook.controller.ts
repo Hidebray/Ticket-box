@@ -4,6 +4,7 @@ import redisClient from '../config/redis';
 import NotificationService from '../services/notification.service';
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
+import logger from '../utils/logger';
 
 export const handlePaymentWebhook = async (req: Request, res: Response): Promise<void> => {
     try {
@@ -32,7 +33,7 @@ export const handlePaymentWebhook = async (req: Request, res: Response): Promise
 
         if (status === 'SUCCESS') {
             // Cập nhật Order -> SUCCESS, Tickets -> SOLD (đồng nghĩa với AVAILABLE để người dùng đem đi check-in)
-            await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+            await prisma.$transaction(async (tx) => {
                 await tx.orders.update({
                     where: { id: orderId },
                     data: { status: 'SUCCESS' }
@@ -48,7 +49,7 @@ export const handlePaymentWebhook = async (req: Request, res: Response): Promise
             const updatedOrder = await prisma.orders.findUnique({
                 where: { id: orderId },
                 include: {
-                    users: true,
+                    users: { select: { id: true, email: true } },
                     tickets: {
                         include: {
                             ticket_types: {
@@ -73,7 +74,7 @@ export const handlePaymentWebhook = async (req: Request, res: Response): Promise
                 NotificationService.notifyTicketConfirmation(
                     updatedOrder.users.email,
                     ticketDetails
-                ).catch(err => console.error('Lỗi khi gửi email xác nhận mua vé:', err));
+                ).catch(err => logger.error({ err }, 'Lỗi khi gửi email xác nhận mua vé'));
             }
 
             // Push SSE Update
@@ -82,14 +83,15 @@ export const handlePaymentWebhook = async (req: Request, res: Response): Promise
             res.status(200).json({ message: 'Payment success, tickets are now valid' });
         } else if (status === 'FAILED') {
             // Thanh toán thất bại -> Hủy Order, xóa Tickets, hoàn số lượng lại cho hệ thống
-            await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+            await prisma.$transaction(async (tx) => {
                 await tx.orders.update({
                     where: { id: orderId },
                     data: { status: 'FAILED' }
                 });
 
-                await tx.tickets.deleteMany({
-                    where: { order_id: orderId }
+                await tx.tickets.updateMany({
+                    where: { order_id: orderId },
+                    data: { status: 'AVAILABLE', user_id: null, order_id: null }
                 });
             });
 
@@ -109,7 +111,7 @@ export const handlePaymentWebhook = async (req: Request, res: Response): Promise
         }
 
     } catch (error) {
-        console.error('Webhook processing error:', error);
+        logger.error({ error }, 'Webhook processing error');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };
@@ -136,7 +138,7 @@ export const mockPaymentHandler = async (req: Request, res: Response): Promise<v
         const result = await response.json();
         res.status(response.status).json(result);
     } catch (error) {
-        console.error('Mock payment error:', error);
+        logger.error({ error }, 'Mock payment error');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };

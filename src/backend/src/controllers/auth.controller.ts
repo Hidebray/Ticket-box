@@ -18,7 +18,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
             return;
         }
 
-        const existingUser = await prisma.users.findUnique({ where: { email } });
+        const existingUser = await prisma.users.findUnique({ where: { email }, select: { id: true } });
         if (existingUser) {
             res.status(409).json({ message: 'Email already exists' });
             return;
@@ -67,7 +67,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         }
 
         const payload = { id: user.id, role: user.role };
-        const expiresIn = process.env.JWT_EXPIRES_IN || '1d';
+        const expiresIn = '7d';
         const token = jwt.sign(payload, JWT_SECRET, { expiresIn: expiresIn as jwt.SignOptions['expiresIn'] });
 
         res.json({

@@ -6,6 +6,7 @@ import webhookRoutes from './webhook.routes';
 import workerRoutes from './worker.routes';
 import checkinRoutes from './checkin.routes';
 import adminRoutes from './admin.routes';
+import userRoutes from './user.routes';
 
 const router = Router();
 
@@ -16,9 +17,21 @@ router.use('/webhooks', webhookRoutes);
 router.use('/workers', workerRoutes);
 router.use('/checkin', checkinRoutes);
 router.use('/admin', adminRoutes);
+router.use('/users', userRoutes);
 
-router.get('/ping', (req: Request, res: Response) => {
-  res.json({ message: 'pong', timestamp: new Date() });
+import prisma from '../config/db';
+import redisClient from '../config/redis';
+import logger from '../utils/logger';
+
+router.get('/health', async (req: Request, res: Response) => {
+    try {
+        await prisma.$queryRaw`SELECT 1`;
+        await redisClient.ping();
+        res.status(200).json({ status: 'ok', timestamp: new Date() });
+    } catch (error) {
+        logger.error({ error }, 'Health check failed');
+        res.status(503).json({ status: 'error', message: 'Service Unavailable' });
+    }
 });
 
 export default router;

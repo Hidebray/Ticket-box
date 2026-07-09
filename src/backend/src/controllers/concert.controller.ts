@@ -2,21 +2,51 @@ import { Request, Response } from 'express';
 import prisma from '../config/db';
 import redisClient from '../config/redis';
 import { EventEmitter } from 'events';
+import logger from '../utils/logger';
 
 // --- Singleton Redis Subscriber for Seat SSE ---
 export const seatEventEmitter = new EventEmitter();
 seatEventEmitter.setMaxListeners(0); // Allow many concurrent users
 
 let isSeatSubscribed = false;
+let reconnectAttemptsSeat = 0;
+
 export const ensureSeatSubscriber = () => {
     if (isSeatSubscribed) return;
     isSeatSubscribed = true;
     const subscriber = redisClient.duplicate();
+
+    const reconnect = () => {
+        if (!isSeatSubscribed) return; // already handling
+        isSeatSubscribed = false;
+        subscriber.disconnect();
+        
+        reconnectAttemptsSeat++;
+        const delay = Math.min(1000 * (2 ** reconnectAttemptsSeat), 30000); // Max 30s
+        logger.warn(`SSE Seat Redis subscriber disconnected. Reconnecting in ${delay}ms (Attempt ${reconnectAttemptsSeat})`);
+        
+        setTimeout(() => {
+            ensureSeatSubscriber();
+        }, delay);
+    };
+
     subscriber.subscribe('seat_updates', (err) => {
         if (err) {
-            console.error('Redis subscribe error for seats:', err);
-            isSeatSubscribed = false;
+            logger.error({ err }, 'Redis subscribe error for seats');
+            reconnect();
+        } else {
+            reconnectAttemptsSeat = 0;
+            logger.info('Redis subscribed to seat_updates');
         }
+    });
+
+    subscriber.on('error', (err) => {
+        logger.error({ err }, 'Redis subscriber error event');
+    });
+
+    subscriber.on('end', () => {
+        logger.warn('Redis subscriber connection ended');
+        reconnect();
     });
 
     subscriber.on('message', (channel, message) => {
@@ -27,7 +57,7 @@ export const ensureSeatSubscriber = () => {
                     seatEventEmitter.emit(`seat_update:${data.ticketTypeId}`, data);
                 }
             } catch (err) {
-                console.error('SSE Message parsing error:', err);
+                logger.error({ err }, 'SSE Message parsing error');
             }
         }
     });
@@ -52,6 +82,7 @@ export const getConcerts = async (req: Request, res: Response): Promise<void> =>
             select: {
                 id: true,
                 name: true,
+                location: true,
                 start_time: true,
                 status: true,
                 created_at: true
@@ -63,7 +94,7 @@ export const getConcerts = async (req: Request, res: Response): Promise<void> =>
 
         res.json(concerts);
     } catch (error) {
-        console.error('Error fetching concerts:', error);
+        logger.error({ error }, 'Error fetching concerts');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };
@@ -85,6 +116,7 @@ export const getConcertDetails = async (req: Request, res: Response): Promise<vo
             where: { id: id as string },
             include: {
                 ticket_types: {
+                    where: { type: 'PUBLIC' },
                     orderBy: { price: 'desc' }
                 }
             }
@@ -110,6 +142,7 @@ export const getConcertDetails = async (req: Request, res: Response): Promise<vo
 
         const ticketTypesWithRemaining = concert.ticket_types.map(type => ({
             ...type,
+            price: Number(type.price),
             remaining_quantity: type.total_quantity - (soldCountMap.get(type.id) ?? 0)
         }));
 
@@ -123,7 +156,7 @@ export const getConcertDetails = async (req: Request, res: Response): Promise<vo
 
         res.json(concertData);
     } catch (error) {
-        console.error('Error fetching concert details:', error);
+        logger.error({ error }, 'Error fetching concert details');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };
@@ -169,7 +202,7 @@ export const getZoneTickets = async (req: Request, res: Response): Promise<void>
 
         res.json(tickets);
     } catch (error) {
-        console.error('Error fetching zone tickets:', error);
+        logger.error({ error }, 'Error fetching zone tickets');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };
@@ -217,12 +250,10 @@ export const holdSeat = async (req: Request, res: Response): Promise<void> => {
         }
 
         const holdKey = `seat_hold:${ticketId}`;
-        // SetNX returns 1 if key was set, 0 if it already exists
-        const setNxResult = await redisClient.setnx(holdKey, userId);
+        // SET key val EX 120 NX is atomic
+        const setNxResult = await redisClient.set(holdKey, userId, 'EX', 120, 'NX');
 
-        if (setNxResult === 1) {
-            // Set expire time for 120 seconds
-            await redisClient.expire(holdKey, 120);
+        if (setNxResult === 'OK') {
             
             // Broadcast the hold event
             await redisClient.publish('seat_updates', JSON.stringify({
@@ -238,7 +269,7 @@ export const holdSeat = async (req: Request, res: Response): Promise<void> => {
             res.status(409).json({ message: 'Seat is currently held by someone else' });
         }
     } catch (error) {
-        console.error('Error holding seat:', error);
+        logger.error({ error }, 'Error holding seat');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };
@@ -273,7 +304,7 @@ export const unholdSeat = async (req: Request, res: Response): Promise<void> => 
             res.status(403).json({ message: 'You are not holding this seat' });
         }
     } catch (error) {
-        console.error('Error releasing seat:', error);
+        logger.error({ error }, 'Error releasing seat');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };

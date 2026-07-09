@@ -1,12 +1,13 @@
-import prisma from '../config/db';
+import prisma from '../config/worker.db';
 import redisClient from '../config/redis';
 import NotificationService from '../services/notification.service';
 import { taskQueue } from '../queue';
+import logger from '../utils/logger';
 
 // Function to check and cancel a specific expired order (Triggered by BullMQ Delayed Job)
 export const cancelExpiredOrderJob = async (orderId: string) => {
     if (!orderId || typeof orderId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderId)) {
-        console.error(`[Worker] Invalid orderId format: ${orderId}`);
+        logger.error({ orderId }, '[Worker] Invalid orderId format');
         return;
     }
 
@@ -21,7 +22,7 @@ export const cancelExpiredOrderJob = async (orderId: string) => {
         // If order is already SUCCESS or FAILED, nothing to do
         if (order.status !== 'PENDING') return;
 
-        console.log(`[Worker] Cancelling expired order ${orderId}...`);
+        logger.info({ orderId }, '[Worker] Cancelling expired order...');
 
         await prisma.$transaction(async (tx: any) => {
             await tx.orders.update({
@@ -29,8 +30,9 @@ export const cancelExpiredOrderJob = async (orderId: string) => {
                 data: { status: 'FAILED' }
             });
 
-            await tx.tickets.deleteMany({
-                where: { order_id: order.id }
+            await tx.tickets.updateMany({
+                where: { order_id: order.id },
+                data: { status: 'AVAILABLE', user_id: null, order_id: null }
             });
         });
 
@@ -50,17 +52,17 @@ export const cancelExpiredOrderJob = async (orderId: string) => {
             await redisClient.del(`zone_tickets:${ticketTypeId}`);
         }
         
-        console.log(`[Worker] Cancelled Order ${order.id} and restored ${order.tickets.length} tickets.`);
+        logger.info({ orderId: order.id, count: order.tickets.length }, '[Worker] Cancelled Order and restored tickets');
 
     } catch (error) {
-        console.error('[Worker] Error cancelling expired order:', error);
+        logger.error({ error }, '[Worker] Error cancelling expired order');
     }
 };
 
 // Function to reconcile Redis ticket remaining counters with DB
 export const syncRedisCounters = async () => {
     try {
-        console.log(`[Worker] Starting Ticket Reconciliation...`);
+        logger.info('[Worker] Starting Ticket Reconciliation...');
         const ticketTypes = await prisma.ticket_types.findMany();
         
         for (const tt of ticketTypes) {
@@ -76,9 +78,9 @@ export const syncRedisCounters = async () => {
             // Sync with Redis
             await redisClient.set(remainingKey, remaining);
         }
-        console.log(`[Worker] Completed Ticket Reconciliation.`);
+        logger.info('[Worker] Completed Ticket Reconciliation.');
     } catch (error) {
-        console.error('[Worker] Error during ticket reconciliation:', error);
+        logger.error({ error }, '[Worker] Error during ticket reconciliation');
     }
 };
 
@@ -103,7 +105,7 @@ export const sendPreEventReminders = async () => {
                 }
             },
             include: {
-                users: true,
+                users: { select: { id: true, email: true } },
                 ticket_types: {
                     include: {
                         concerts: true
@@ -114,7 +116,7 @@ export const sendPreEventReminders = async () => {
 
         if (upcomingTickets.length === 0) return;
 
-        console.log(`[Worker] Found ${upcomingTickets.length} upcoming tickets in 24h. Checking reminders...`);
+        logger.info({ count: upcomingTickets.length }, '[Worker] Found upcoming tickets in 24h. Checking reminders...');
 
         for (const ticket of upcomingTickets) {
             if (!ticket.users) continue;
@@ -136,11 +138,11 @@ export const sendPreEventReminders = async () => {
                 // Mark as sent in Redis with 48h TTL
                 await redisClient.set(redisKey, '1', 'EX', 48 * 60 * 60);
                 
-                console.log(`[Worker] Sent 24h reminder for ${concertName} to ${userEmail}`);
+                logger.info({ concertName, userEmail }, '[Worker] Sent 24h reminder');
             }
         }
     } catch (error) {
-        console.error('[Worker] Error sending pre-event reminders:', error);
+        logger.error({ error }, '[Worker] Error sending pre-event reminders');
     }
 };
 
@@ -162,19 +164,19 @@ export const sweepOrphanedOrders = async () => {
 
         if (orphanedOrders.length === 0) return;
 
-        console.log(`[Worker] Found ${orphanedOrders.length} orphaned pending orders. Cancelling in batches...`);
+        logger.info({ count: orphanedOrders.length }, '[Worker] Found orphaned pending orders. Cancelling in batches...');
 
         // [PERF-02] Batch processing — xử lý 20 orders song song thay vì tuần tự
         const BATCH_SIZE = 20;
         for (let i = 0; i < orphanedOrders.length; i += BATCH_SIZE) {
             const batch = orphanedOrders.slice(i, i + BATCH_SIZE);
             await Promise.all(batch.map(order => cancelExpiredOrderJob(order.id)));
-            console.log(`[Worker] Processed batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(orphanedOrders.length / BATCH_SIZE)}`);
+            logger.info({ currentBatch: Math.floor(i / BATCH_SIZE) + 1, totalBatches: Math.ceil(orphanedOrders.length / BATCH_SIZE) }, '[Worker] Processed batch');
         }
 
-        console.log(`[Worker] Completed Orphaned Orders Sweep. Total: ${orphanedOrders.length}`);
+        logger.info({ count: orphanedOrders.length }, '[Worker] Completed Orphaned Orders Sweep');
     } catch (error) {
-        console.error('[Worker] Error during orphaned orders sweep:', error);
+        logger.error({ error }, '[Worker] Error during orphaned orders sweep');
     }
 };
 
@@ -184,20 +186,26 @@ export const startRepeatableJobs = async () => {
     // Reconcile tickets every 5 minutes
     await taskQueue.add('reconcile-tickets', {}, { 
         repeat: { pattern: '*/5 * * * *' },
-        jobId: 'reconcile-tickets-job'
+        jobId: 'reconcile-tickets-job',
+        removeOnComplete: { count: 10 },
+        removeOnFail: { count: 1000 }
     });
 
     // Send reminders every 10 minutes
     await taskQueue.add('send-pre-event-reminders', {}, { 
         repeat: { pattern: '*/10 * * * *' },
-        jobId: 'send-pre-event-reminders-job'
+        jobId: 'send-pre-event-reminders-job',
+        removeOnComplete: { count: 10 },
+        removeOnFail: { count: 1000 }
     });
 
     // Sweep orphaned orders every 5 minutes
     await taskQueue.add('sweep-orphaned-orders', {}, { 
         repeat: { pattern: '*/5 * * * *' },
-        jobId: 'sweep-orphaned-orders-job'
+        jobId: 'sweep-orphaned-orders-job',
+        removeOnComplete: { count: 10 },
+        removeOnFail: { count: 1000 }
     });
     
-    console.log('[Worker] Repeatable jobs scheduled in BullMQ.');
+    logger.info('[Worker] Repeatable jobs scheduled in BullMQ.');
 };

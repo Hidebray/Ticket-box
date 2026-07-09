@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
+import logger from '../utils/logger';
 
 export const verifyWebhookSignature = (req: Request, res: Response, next: NextFunction): void => {
     const signature = req.headers['x-webhook-signature'] as string | undefined;
@@ -25,14 +26,14 @@ export const verifyWebhookSignature = (req: Request, res: Response, next: NextFu
 
         // Nếu độ dài khác nhau → reject ngay (timingSafeEqual yêu cầu cùng độ dài)
         if (sigBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(sigBuffer, expectedBuffer)) {
-            console.warn('[Webhook] Signature mismatch from:', req.ip);
+            logger.warn({ ip: req.ip }, '[Webhook] Signature mismatch');
             res.status(403).json({ message: 'Invalid Webhook Signature' });
             return;
         }
 
         next();
     } catch (error) {
-        console.error('Webhook signature verification error:', error);
+        logger.error({ error }, 'Webhook signature verification error');
         res.status(500).json({ message: 'Internal Server Error verifying signature' });
     }
 };

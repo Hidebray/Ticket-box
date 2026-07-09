@@ -39,22 +39,41 @@ export const webhookPayloadSchema = z.object({
 export const createConcertSchema = z.object({
     name: z.string().min(1, 'Tên concert không được để trống').max(255),
     description: z.string().optional(),
+    location: z.string().min(1, 'Địa điểm không được để trống').max(255).optional(),
     start_time: z.string().datetime({ message: 'start_time phải là ISO 8601 datetime' }),
     status: z.enum(['DRAFT', 'PUBLISHED', 'CANCELLED']).default('DRAFT'),
 });
 
+export const updateConcertSchema = createConcertSchema.partial();
+
 export const createTicketTypeSchema = z.object({
     concert_id: z.string().uuid('concert_id phải là UUID hợp lệ'),
     name: z.string().min(1).max(100),
-    price: z.number().nonnegative('Giá phải >= 0'),
-    total_quantity: z.number().int().nonnegative('Số lượng phải >= 0'),
-    max_per_user: z.number().int().positive().default(4),
+    price: z.coerce.number().nonnegative('Giá phải >= 0'),
+    total_quantity: z.coerce.number().int().nonnegative('Số lượng phải >= 0'),
+    max_per_user: z.coerce.number().int().positive().default(4),
 });
 
 export const seatingMapSchema = z.object({
     rows: z.number().int().min(1).max(50, 'Tối đa 50 hàng'),
     cols: z.number().int().min(1).max(50, 'Tối đa 50 cột'),
     disabledSeats: z.array(z.string()).default([]),
+});
+
+// --- Check-in ---
+export const syncUpSchema = z.object({
+    scannedTickets: z.array(z.object({
+        ticketId: z.string().uuid('ticketId phải là UUID hợp lệ'),
+        scannedAt: z.string().datetime({ message: 'scannedAt phải là ISO 8601 datetime' })
+    })).min(1, 'Phải có ít nhất 1 vé để đồng bộ')
+});
+
+// --- Worker ---
+export const triggerJobSchema = z.object({
+    type: z.enum(['generate-ai-bio', 'send-email'], {
+        message: 'Invalid job type'
+    }),
+    payload: z.any()
 });
 
 // ============================================================

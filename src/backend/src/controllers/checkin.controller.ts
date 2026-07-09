@@ -1,19 +1,24 @@
 import { Request, Response } from 'express';
 import prisma from '../config/db';
+import logger from '../utils/logger';
+import { z } from 'zod';
 
 export const syncDown = async (req: Request, res: Response): Promise<void> => {
     try {
         const { concertId } = req.query;
 
-        if (!concertId || typeof concertId !== 'string') {
-            res.status(400).json({ message: 'Missing or invalid concertId' });
+        const uuidSchema = z.string().uuid();
+        const validation = uuidSchema.safeParse(concertId);
+
+        if (!validation.success) {
+            res.status(400).json({ message: 'Missing or invalid concertId format' });
             return;
         }
 
         const tickets = await prisma.tickets.findMany({
             where: {
                 ticket_types: {
-                    concert_id: concertId
+                    concert_id: validation.data
                 },
                 status: {
                     in: ['SOLD', 'CHECKED_IN'] // Allow STAFF to download all valid tickets
@@ -32,7 +37,37 @@ export const syncDown = async (req: Request, res: Response): Promise<void> => {
             data: tickets
         });
     } catch (error) {
-        console.error('Sync Down Error:', error);
+        logger.error({ error }, 'Sync Down Error');
+        res.status(500).json({ message: 'Internal Server Error' });
+    }
+};
+
+export const countTickets = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { concertId } = req.query;
+
+        const uuidSchema = z.string().uuid();
+        const validation = uuidSchema.safeParse(concertId);
+
+        if (!validation.success) {
+            res.status(400).json({ message: 'Missing or invalid concertId format' });
+            return;
+        }
+
+        const count = await prisma.tickets.count({
+            where: {
+                ticket_types: {
+                    concert_id: validation.data
+                },
+                status: {
+                    in: ['SOLD', 'CHECKED_IN']
+                }
+            }
+        });
+
+        res.json({ count });
+    } catch (error) {
+        logger.error({ error }, 'Count Tickets Error');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };
@@ -68,28 +103,45 @@ export const syncUp = async (req: Request, res: Response): Promise<void> => {
             }
 
             if (dbTicket.status === 'SOLD') {
-                // First time scan logic
-                await prisma.tickets.update({
-                    where: { id: ticketId },
+                // First time scan logic - ATOMIC UPDATE
+                const updateResult = await prisma.tickets.updateMany({
+                    where: { id: ticketId, status: 'SOLD' },
                     data: {
                         status: 'CHECKED_IN',
                         scanned_at: mobileScannedTime
                     }
                 });
-                results.push({ ticketId, status: 'SUCCESS' });
+
+                if (updateResult.count === 1) {
+                    results.push({ ticketId, status: 'SUCCESS' });
+                } else {
+                    results.push({ ticketId, status: 'DUPLICATE_REJECTED' });
+                }
             } else if (dbTicket.status === 'CHECKED_IN') {
                 // Conflict resolution: First-Write-Wins based on scanned_at
                 const dbScannedTime = dbTicket.scanned_at;
                 
                 if (!dbScannedTime || mobileScannedTime < dbScannedTime) {
-                    // Mobile device actually scanned earlier, update DB to reflect reality
-                    await prisma.tickets.update({
-                        where: { id: ticketId },
+                    // Mobile device actually scanned earlier, update DB to reflect reality - ATOMIC UPDATE
+                    const updateResult = await prisma.tickets.updateMany({
+                        where: { 
+                            id: ticketId, 
+                            status: 'CHECKED_IN', 
+                            OR: [
+                                { scanned_at: null },
+                                { scanned_at: { gt: mobileScannedTime } }
+                            ]
+                        },
                         data: {
                             scanned_at: mobileScannedTime
                         }
                     });
-                    results.push({ ticketId, status: 'SUCCESS_OVERWRITTEN' });
+
+                    if (updateResult.count === 1) {
+                        results.push({ ticketId, status: 'SUCCESS_OVERWRITTEN' });
+                    } else {
+                        results.push({ ticketId, status: 'DUPLICATE_REJECTED' });
+                    }
                 } else {
                     // DB has earlier timestamp -> The current mobile device scan is a duplicate/fraud
                     results.push({ ticketId, status: 'DUPLICATE_REJECTED' });
@@ -105,7 +157,7 @@ export const syncUp = async (req: Request, res: Response): Promise<void> => {
         });
 
     } catch (error) {
-        console.error('Sync Up Error:', error);
+        logger.error({ error }, 'Sync Up Error');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };

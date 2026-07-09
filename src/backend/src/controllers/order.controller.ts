@@ -6,21 +6,51 @@ import { taskQueue } from '../queue';
 import { paymentCircuitBreaker } from '../services/payment.service';
 import { Prisma } from '@prisma/client';
 import { EventEmitter } from 'events';
+import logger from '../utils/logger';
 
 // --- Singleton Redis Subscriber for SSE ---
 export const paymentEventEmitter = new EventEmitter();
 paymentEventEmitter.setMaxListeners(0); // Allow many concurrent users
 
 let isSubscribed = false;
+let reconnectAttemptsPayment = 0;
+
 const ensurePaymentSubscriber = () => {
     if (isSubscribed) return;
     isSubscribed = true;
     const subscriber = redisClient.duplicate();
+
+    const reconnect = () => {
+        if (!isSubscribed) return; // already handling
+        isSubscribed = false;
+        subscriber.disconnect();
+
+        reconnectAttemptsPayment++;
+        const delay = Math.min(1000 * (2 ** reconnectAttemptsPayment), 30000); // Max 30s
+        logger.warn(`SSE Payment Redis subscriber disconnected. Reconnecting in ${delay}ms (Attempt ${reconnectAttemptsPayment})`);
+
+        setTimeout(() => {
+            ensurePaymentSubscriber();
+        }, delay);
+    };
+
     subscriber.subscribe('payment_updates', (err) => {
         if (err) {
-            console.error('Redis subscribe error:', err);
-            isSubscribed = false;
+            logger.error({ err }, 'Redis subscribe error for payments');
+            reconnect();
+        } else {
+            reconnectAttemptsPayment = 0;
+            logger.info('Redis subscribed to payment_updates');
         }
+    });
+
+    subscriber.on('error', (err) => {
+        logger.error({ err }, 'Redis payment subscriber error event');
+    });
+
+    subscriber.on('end', () => {
+        logger.warn('Redis payment subscriber connection ended');
+        reconnect();
     });
 
     subscriber.on('message', (channel, message) => {
@@ -31,12 +61,29 @@ const ensurePaymentSubscriber = () => {
                     paymentEventEmitter.emit(`payment_update:${data.orderId}`, data);
                 }
             } catch (err) {
-                console.error('SSE Message parsing error:', err);
+                logger.error({ err }, 'SSE Message parsing error');
             }
         }
     });
 };
 // ------------------------------------------
+
+// --- Redis Lua Script for Atomic Counter ---
+const checkAndDecrScript = `
+    local key = KEYS[1]
+    local qty = tonumber(ARGV[1])
+    
+    if redis.call("EXISTS", key) == 0 then
+        return -1 -- Not initialized
+    end
+    
+    local remaining = tonumber(redis.call("GET", key))
+    if remaining < qty then
+        return -2 -- Sold out
+    end
+    
+    return redis.call("DECRBY", key, qty) -- Returns remaining after decr
+`;
 
 export const createOrder = async (req: Request, res: Response): Promise<void> => {
     const idempotencyKey = (req as Request & { idempotencyKey?: string }).idempotencyKey;
@@ -59,43 +106,82 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
 
     const qty = ticketIds.length;
     const remainingKey = `ticket_remaining:${ticketTypeId}`;
+    let redisDecremented = false;
 
     try {
-        // 1. Initialize Redis Pre-check if not exists
-        const exists = await redisClient.exists(remainingKey);
-        if (!exists) {
-            const tt = await prisma.ticket_types.findUnique({ where: { id: ticketTypeId } });
-            if (!tt) {
-                await redisClient.del(redisIdempKey);
-                res.status(404).json({ message: 'Ticket type not found' });
-                return;
+        // 1. Atomic Check & Decr via Lua Script
+        let remainingAfterDecr = await redisClient.eval(checkAndDecrScript, 1, remainingKey, qty) as number;
+
+        if (remainingAfterDecr === -1) {
+            // Not initialized -> Try to acquire init lock
+            const lockKey = `lock:init:${ticketTypeId}`;
+            const locked = await redisClient.set(lockKey, '1', 'EX', 5, 'NX');
+
+            if (locked) {
+                // Lock OK: Query DB and initialize
+                const tt = await prisma.ticket_types.findUnique({ where: { id: ticketTypeId } });
+                if (!tt) {
+                    await redisClient.del(lockKey);
+                    await redisClient.del(redisIdempKey);
+                    res.status(404).json({ message: 'Ticket type not found' });
+                    return;
+                }
+
+                const soldOrReserved = await prisma.tickets.count({
+                    where: { ticket_type_id: ticketTypeId, status: { in: ['RESERVED', 'SOLD', 'CHECKED_IN'] } }
+                });
+                const remaining = tt.total_quantity - soldOrReserved;
+
+                if (remaining < qty) {
+                    await redisClient.set(remainingKey, remaining); // Set anyway so future requests get -2
+                    await redisClient.del(lockKey);
+                    await redisClient.set(redisIdempKey, JSON.stringify({ status: 'FAILED' }), 'EX', 300);
+                    res.status(400).json({ message: 'Ticket type is sold out' });
+                    return;
+                }
+
+                // Initialize Redis and deduct qty
+                remainingAfterDecr = remaining - qty;
+                const setSuccess = await redisClient.set(remainingKey, remainingAfterDecr);
+                if (setSuccess) redisDecremented = true;
+                await redisClient.del(lockKey);
+            } else {
+                // Lock FAIL: Fail-forward gracefully
+                const tt = await prisma.ticket_types.findUnique({ where: { id: ticketTypeId } });
+                if (!tt) {
+                    await redisClient.del(redisIdempKey);
+                    res.status(404).json({ message: 'Ticket type not found' });
+                    return;
+                }
+
+                const soldOrReserved = await prisma.tickets.count({
+                    where: { ticket_type_id: ticketTypeId, status: { in: ['RESERVED', 'SOLD', 'CHECKED_IN'] } }
+                });
+                const remaining = tt.total_quantity - soldOrReserved;
+
+                if (remaining < qty) {
+                    await redisClient.set(redisIdempKey, JSON.stringify({ status: 'FAILED' }), 'EX', 300);
+                    res.status(400).json({ message: 'Ticket type is sold out (DB Check)' });
+                    return;
+                }
+                // Proceed to DB transaction without touching Redis
             }
-            
-            const soldOrReserved = await prisma.tickets.count({
-                where: { ticket_type_id: ticketTypeId, status: { in: ['RESERVED', 'SOLD', 'CHECKED_IN'] } }
-            });
-            const remaining = tt.total_quantity - soldOrReserved;
-            
-            await redisClient.setnx(remainingKey, remaining);
-        }
-
-        // 2. Pre-check: Atomic DECR
-        const remainingAfterDecr = await redisClient.decrby(remainingKey, qty);
-
-        if (remainingAfterDecr < 0) {
-            await redisClient.incrby(remainingKey, qty);
+        } else if (remainingAfterDecr === -2) {
             await redisClient.set(redisIdempKey, JSON.stringify({ status: 'FAILED' }), 'EX', 300);
             res.status(400).json({ message: 'Ticket type is sold out (Redis Pre-check)' });
             return;
+        } else if (remainingAfterDecr >= 0) {
+            redisDecremented = true;
         }
 
         // 3. Database Transaction
         try {
-            const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-                // Lock exact tickets
+            const result = await prisma.$transaction(async (tx) => {
+                // Lock exact tickets and enforce cross-zone validation
                 const tickets: { id: string, status: string }[] = await tx.$queryRaw`
                     SELECT id, status FROM tickets
                     WHERE id::text IN (${Prisma.join(ticketIds)})
+                      AND ticket_type_id = ${ticketTypeId}::uuid
                     FOR UPDATE SKIP LOCKED
                 `;
 
@@ -108,12 +194,22 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
                     throw new Error('Some tickets are no longer available');
                 }
 
+                // Get ticket snapshot info for history
+                const ticketsInfo = await tx.$queryRaw`
+                    SELECT t.seat_label, tt.name as type_name, tt.price, c.name as concert_name
+                    FROM tickets t
+                    JOIN ticket_types tt ON t.ticket_type_id = tt.id
+                    JOIN concerts c ON tt.concert_id = c.id
+                    WHERE t.id::text IN (${Prisma.join(ticketIds)})
+                `;
+
                 // Create Order
                 const order = await tx.orders.create({
                     data: {
                         user_id: userId!,
                         status: 'PENDING',
-                        idempotency_key: idempotencyKey!
+                        idempotency_key: idempotencyKey!,
+                        ticket_snapshot: ticketsInfo as any // keep as any just to be absolutely safe
                     }
                 });
 
@@ -130,26 +226,33 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
                 return order;
             });
 
-            const ticketTypeInfo = await prisma.ticket_types.findUnique({ where: { id: ticketTypeId }});
+            const ticketTypeInfo = await prisma.ticket_types.findUnique({ where: { id: ticketTypeId } });
             const totalAmount = (ticketTypeInfo?.price ? Number(ticketTypeInfo.price) : 0) * qty;
-            
+
             let paymentUrl = '';
             try {
                 // Gọi Circuit Breaker để sinh URL thanh toán thực sự
                 paymentUrl = await paymentCircuitBreaker.fire(result.id, totalAmount) as string;
             } catch (circuitError: any) {
                 // Nếu Fire thất bại (vd: random 20% fail hoặc Circuit Open ngay lúc này)
-                console.warn('Payment gateway timeout/error:', circuitError.message);
+                logger.warn({ msg: circuitError.message }, 'Payment gateway timeout/error');
                 // Vẫn cho phép tạo đơn (vì vé đã khóa), user có thể Retry thanh toán từ Dashboard
             }
 
             const responseData = { orderId: result.id, ticketTypeId, quantity: qty, paymentUrl };
-            
+
             await redisClient.set(redisIdempKey, JSON.stringify({ status: 'SUCCESS', data: responseData }), 'EX', 86400); // 24h
-            
-            // Push Delayed Job để hủy đơn hàng sau 15 phút nếu chưa thanh toán
-            await taskQueue.add('cancel-expired-order', { orderId: result.id }, { delay: 15 * 60 * 1000 });
-            
+
+            await taskQueue.add(
+                'cancel-expired-order',
+                { orderId: result.id },
+                {
+                    delay: 15 * 60 * 1000,
+                    removeOnComplete: { count: 500, age: 3600 },
+                    removeOnFail: { count: 1000 }
+                }
+            );
+
             // SSE: Notify map viewers
             await redisClient.publish('seat_updates', JSON.stringify({
                 ticketTypeId,
@@ -157,19 +260,31 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
                 status: 'RESERVED'
             }));
             await redisClient.del(`zone_tickets:${ticketTypeId}`); // Clear cache for new viewers
-            
+
             res.status(201).json({ message: 'Order created successfully', data: responseData });
 
         } catch (dbError: any) {
-            await redisClient.incrby(remainingKey, qty); // rollback Redis pre-check
+            if (redisDecremented) {
+                await redisClient.incrby(remainingKey, qty); // rollback Redis pre-check
+            }
             await redisClient.set(redisIdempKey, JSON.stringify({ status: 'FAILED' }), 'EX', 300);
-            
-            console.error('Transaction Error:', dbError.message);
-            res.status(400).json({ message: 'Failed to complete order. Tickets might be taken.' });
+            let errorMessage = dbError.message;
+            if (errorMessage.includes('Some tickets are already taken')) {
+                errorMessage = 'Ghế bạn chọn vừa bị người khác mua mất. Vui lòng chọn ghế khác nhé!';
+            } else if (errorMessage.includes('no longer available')) {
+                errorMessage = 'Ghế này không còn trống. Vui lòng tải lại trang.';
+            } else if (errorMessage.includes('maximum allowed tickets')) {
+                errorMessage = 'Bạn đã vượt quá số lượng vé tối đa cho phép mua của hạng vé này!';
+            } else {
+                errorMessage = 'Hệ thống đang bận hoặc có lỗi cơ sở dữ liệu. Vui lòng thử lại sau.';
+            }
+
+            logger.error({ error: dbError }, 'Transaction Error');
+            res.status(400).json({ message: errorMessage });
         }
 
     } catch (error) {
-        console.error('Create Order Error:', error);
+        logger.error({ error }, 'Create Order Error');
         await redisClient.del(redisIdempKey); // allow retry
         res.status(500).json({ message: 'Internal Server Error' });
     }
@@ -201,7 +316,7 @@ export const getMyTickets = async (req: Request, res: Response): Promise<void> =
 
         res.json(orders);
     } catch (error) {
-        console.error('Error fetching my tickets:', error);
+        logger.error({ error }, 'Error fetching my tickets');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };
@@ -238,7 +353,7 @@ export const getOrderById = async (req: Request, res: Response): Promise<void> =
 
         res.json(order);
     } catch (error) {
-        console.error('Error fetching order by id:', error);
+        logger.error({ error }, 'Error fetching order by id');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };

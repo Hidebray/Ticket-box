@@ -9,11 +9,13 @@
  */
 import 'dotenv/config';
 
+import logger from './utils/logger';
+
 // Validate env trước khi làm gì
-const REQUIRED_ENV_VARS = ['DATABASE_URL', 'REDIS_URL'] as const;
+const REQUIRED_ENV_VARS = ['DATABASE_URL', 'REDIS_URL', 'DATABASE_URL_WORKER'] as const;
 const missingVars = REQUIRED_ENV_VARS.filter(key => !process.env[key]);
 if (missingVars.length > 0) {
-    console.error('❌ [WORKER] Thiếu env vars:', missingVars.join(', '));
+    logger.fatal({ missingVars }, 'Thiếu env vars');
     process.exit(1);
 }
 
@@ -24,69 +26,73 @@ const connection = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379'
     maxRetriesPerRequest: null,
 });
 
-console.log('🔧 [Worker Process] Starting BullMQ worker...');
+logger.info('[Worker Process] Starting BullMQ worker...');
+
+// Import guest upload worker
+import { guestUploadWorker } from './workers/guest-upload.worker';
 
 const taskWorker = new Worker('task-queue', async (job: Job) => {
     switch (job.name) {
         case 'generate-ai-bio': {
-            console.log(`[Worker] Generating AI Bio for concert ${job.data.concertId}...`);
+            logger.info(`[Worker] Generating AI Bio for concert ${job.data.concertId}...`);
             await new Promise(resolve => setTimeout(resolve, 3000));
-            console.log(`[Worker] Finished AI Bio for concert ${job.data.concertId}`);
+            logger.info(`[Worker] Finished AI Bio for concert ${job.data.concertId}`);
             break;
         }
         case 'send-email': {
-            console.log(`[Worker] Sending email to ${job.data.email}...`);
+            logger.info(`[Worker] Sending email to ${job.data.email}...`);
             await new Promise(resolve => setTimeout(resolve, 1000));
-            console.log(`[Worker] Email sent to ${job.data.email}`);
+            logger.info(`[Worker] Email sent to ${job.data.email}`);
             break;
         }
         case 'cancel-expired-order': {
-            console.log(`[Worker] Checking expired order ${job.data.orderId}...`);
+            logger.info(`[Worker] Checking expired order ${job.data.orderId}...`);
             const { cancelExpiredOrderJob } = await import('./workers/order-expiry.worker');
             await cancelExpiredOrderJob(job.data.orderId);
             break;
         }
         case 'reconcile-tickets': {
-            console.log('[Worker] Reconciling ticket quantities...');
+            logger.info('[Worker] Reconciling ticket quantities...');
             const { syncRedisCounters } = await import('./workers/order-expiry.worker');
             await syncRedisCounters();
             break;
         }
         case 'send-pre-event-reminders': {
-            console.log('[Worker] Checking pre-event reminders...');
+            logger.info('[Worker] Checking pre-event reminders...');
             const { sendPreEventReminders } = await import('./workers/order-expiry.worker');
             await sendPreEventReminders();
             break;
         }
         case 'sweep-orphaned-orders': {
-            console.log('[Worker] Sweeping orphaned pending orders...');
+            logger.info('[Worker] Sweeping orphaned pending orders...');
             const { sweepOrphanedOrders } = await import('./workers/order-expiry.worker');
             await sweepOrphanedOrders();
             break;
         }
         default:
-            console.warn(`[Worker] Unknown job type: ${job.name}`);
+            logger.warn(`[Worker] Unknown job type: ${job.name}`);
     }
-}, { connection: connection as any });
+}, { connection: connection as any, concurrency: 15 });
 
 taskWorker.on('completed', job => {
-    console.log(`✅ [Worker] Job "${job.name}" (${job.id}) completed.`);
+    logger.info(`[Worker] Job "${job.name}" (${job.id}) completed.`);
 });
 
 taskWorker.on('failed', (job, err) => {
-    console.error(`❌ [Worker] Job "${job?.name}" (${job?.id}) failed: ${err.message}`);
+    logger.error({ err }, `[Worker] Job "${job?.name}" (${job?.id}) failed`);
 });
 
 // Graceful shutdown
 const shutdown = async () => {
-    console.log('\n🛑 [Worker] Shutting down gracefully...');
+    logger.info('[Worker] Shutting down gracefully...');
     await taskWorker.close();
+    await guestUploadWorker.close();
     await connection.quit();
-    console.log('✅ [Worker] Shutdown complete.');
+    logger.info('[Worker] Shutdown complete.');
     process.exit(0);
 };
 
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-console.log('✅ [Worker Process] BullMQ worker running. Waiting for jobs...');
+logger.info('[Worker Process] BullMQ worker running. Waiting for jobs...');

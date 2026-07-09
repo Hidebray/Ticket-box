@@ -1,11 +1,12 @@
 import fs from 'fs';
 import csv from 'csv-parser';
-import prisma from '../config/db';
+import prisma from '../config/worker.db';
 import redisClient from '../config/redis';
 import crypto from 'crypto';
-
+import bcrypt from 'bcrypt';
+import logger from '../utils/logger';
 export const importVipGuests = async (filePath: string, concertId: string, ticketTypeId: string) => {
-    console.log(`[CSV Stream] Starting import for concert ${concertId}`);
+    logger.info({ concertId }, '[CSV Stream] Starting import for concert');
     
     const BATCH_SIZE = 100;
     let batch: any[] = [];
@@ -27,11 +28,11 @@ export const importVipGuests = async (filePath: string, concertId: string, ticke
                 if (batch.length > 0) {
                     await processBatch(batch, ticketTypeId);
                 }
-                console.log(`[CSV Stream] Finished import.`);
+                logger.info('[CSV Stream] Finished import.');
                 resolve(true);
             })
             .on('error', (err) => {
-                console.error('[CSV Stream] Error reading CSV:', err);
+                logger.error({ err }, '[CSV Stream] Error reading CSV');
                 reject(err);
             });
     });
@@ -47,7 +48,7 @@ const processBatch = async (rows: any[], ticketTypeId: string) => {
                     update: {},
                     create: {
                         email: row.email,
-                        password: 'default_vip_password', // Mock hash
+                        password: await bcrypt.hash(crypto.randomUUID(), 10), // Secure random hash
                         role: 'AUDIENCE'
                     }
                 });
@@ -72,8 +73,8 @@ const processBatch = async (rows: any[], ticketTypeId: string) => {
             await redisClient.decrby(remainingKey, rows.length);
         }
 
-        console.log(`[CSV Stream] Processed batch of ${rows.length} VIPs and synced Redis`);
+        logger.info({ count: rows.length }, '[CSV Stream] Processed batch of VIPs and synced Redis');
     } catch (err) {
-        console.error('[CSV Stream] Error processing batch:', err);
+        logger.error({ err }, '[CSV Stream] Error processing batch');
     }
 };

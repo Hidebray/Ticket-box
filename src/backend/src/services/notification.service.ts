@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import nodemailer from 'nodemailer';
+import logger from '../utils/logger';
 dotenv.config();
 
 export interface TicketDetail {
@@ -14,6 +15,7 @@ export interface NotificationProvider {
     name: string;
     sendTicketConfirmation(email: string, tickets: TicketDetail[]): Promise<boolean>;
     sendConcertReminder(email: string, concertName: string, startTime: Date): Promise<boolean>;
+    sendVIPInvitation(email: string, guestName: string, concertName: string, startTime: Date): Promise<boolean>;
 }
 
 // ============================================================
@@ -36,9 +38,9 @@ export class EmailNotificationProvider implements NotificationProvider {
                     pass: process.env.SMTP_PASS,
                 },
             });
-            console.log('[EmailProvider] SMTP transporter initialized.');
+            logger.info('[EmailProvider] SMTP transporter initialized.');
         } else {
-            console.warn('[EmailProvider] SMTP chưa cấu hình — sẽ dùng console log thay thế.');
+            logger.warn('[EmailProvider] SMTP chưa cấu hình — sẽ dùng logger thay thế.');
         }
     }
 
@@ -100,13 +102,16 @@ export class EmailNotificationProvider implements NotificationProvider {
 
     async sendTicketConfirmation(email: string, tickets: TicketDetail[]): Promise<boolean> {
         if (!this.transporter) {
-            // Fallback: log chi tiết ra console để dev xem
-            console.log('\n============================================================');
-            console.log(`📧 [EMAIL FALLBACK] GỬI EMAIL XÁC NHẬN ĐẾN: \x1b[36m${email}\x1b[0m`);
-            tickets.forEach((t, i) => {
-                console.log(`   ${i + 1}. ${t.concertName} | Ghế: ${t.seatLabel || 'GA'} | ${t.price.toLocaleString('vi-VN')}đ`);
-            });
-            console.log('============================================================\n');
+            // Fallback: log chi tiết ra logger
+            logger.info({
+                email,
+                tickets: tickets.map(t => ({
+                    id: t.id,
+                    concertName: t.concertName,
+                    seatLabel: t.seatLabel || 'GA',
+                    price: t.price
+                }))
+            }, '[EMAIL FALLBACK] GỬI EMAIL XÁC NHẬN ĐẾN KHÁCH HÀNG');
             return true;
         }
 
@@ -117,17 +122,17 @@ export class EmailNotificationProvider implements NotificationProvider {
                 subject: `🎫 Xác nhận mua vé - ${tickets[0]?.concertName || 'TicketBox'}`,
                 html: this.buildTicketConfirmationHtml(tickets),
             });
-            console.log(`[EmailProvider] ✅ Đã gửi email xác nhận tới ${email}`);
+            logger.info({ email }, '[EmailProvider] ✅ Đã gửi email xác nhận');
             return true;
         } catch (err) {
-            console.error(`[EmailProvider] ❌ Lỗi gửi email tới ${email}:`, err);
+            logger.error({ err, email }, '[EmailProvider] ❌ Lỗi gửi email');
             return false;
         }
     }
 
     async sendConcertReminder(email: string, concertName: string, startTime: Date): Promise<boolean> {
         if (!this.transporter) {
-            console.log(`\n📧 [EMAIL FALLBACK] NHẮC NHỞ: "${concertName}" đến ${email} — ${startTime.toLocaleString('vi-VN')}`);
+            logger.info({ email, concertName, startTime }, '[EMAIL FALLBACK] NHẮC NHỞ CONCERT');
             return true;
         }
 
@@ -146,10 +151,58 @@ export class EmailNotificationProvider implements NotificationProvider {
                 subject: `🔔 Nhắc nhở: ${concertName} sắp bắt đầu!`,
                 html: htmlBody,
             });
-            console.log(`[EmailProvider] ✅ Đã gửi nhắc nhở tới ${email}`);
+            logger.info({ email }, '[EmailProvider] ✅ Đã gửi nhắc nhở');
             return true;
         } catch (err) {
-            console.error(`[EmailProvider] ❌ Lỗi gửi nhắc nhở tới ${email}:`, err);
+            logger.error({ err, email }, '[EmailProvider] ❌ Lỗi gửi nhắc nhở');
+            return false;
+        }
+    }
+    async sendVIPInvitation(email: string, guestName: string, concertName: string, startTime: Date): Promise<boolean> {
+        if (!this.transporter) {
+            logger.info({ email, guestName, concertName }, '[EMAIL FALLBACK] GỬI THƯ MỜI VIP');
+            return true;
+        }
+
+        const htmlBody = `
+        <!DOCTYPE html>
+        <html lang="vi">
+        <head><meta charset="UTF-8"><title>Thư Mời Tham Dự VIP - ${concertName}</title></head>
+        <body style="font-family:Arial,sans-serif;background:#0f172a;margin:0;padding:0;color:#f8fafc;">
+            <div style="max-width:680px;margin:40px auto;background:#1e293b;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.5);border:1px solid #334155;">
+                <div style="background:linear-gradient(135deg,#c084fc,#a855f7);padding:40px 32px;text-align:center">
+                    <h1 style="color:#fff;margin:0;font-size:32px;letter-spacing:2px">THƯ MỜI VIP</h1>
+                    <p style="color:#f3e8ff;margin:8px 0 0;font-size:18px">${concertName}</p>
+                </div>
+                <div style="padding:40px 32px;text-align:center;">
+                    <p style="font-size:18px;color:#94a3b8;margin-bottom:8px">Trân trọng kính mời</p>
+                    <p style="font-size:28px;color:#f8fafc;font-weight:bold;margin:0 0 32px 0">${guestName}</p>
+                    
+                    <div style="background:#0f172a;padding:24px;border-radius:8px;border:1px dashed #475569;margin-bottom:32px">
+                        <p style="margin:0 0 12px 0;color:#94a3b8">Thời gian bắt đầu sự kiện:</p>
+                        <p style="font-size:24px;font-weight:bold;color:#c084fc;margin:0">${startTime.toLocaleString('vi-VN')}</p>
+                    </div>
+
+                    <p style="font-size:16px;line-height:1.6;color:#cbd5e1">Sự hiện diện của quý vị là niềm vinh hạnh lớn lao cho Ban Tổ Chức. Vui lòng xuất trình thư mời này (hoặc email này) tại lối đi riêng dành cho khách VIP để được tiếp đón chu đáo nhất.</p>
+                </div>
+                <div style="background:#0f172a;padding:20px 32px;text-align:center;color:#64748b;font-size:12px;border-top:1px solid #334155">
+                    © 2026 TicketBox VIP Services
+                </div>
+            </div>
+        </body>
+        </html>`;
+
+        try {
+            await this.transporter.sendMail({
+                from: process.env.SMTP_FROM || '"TicketBox VIP" <noreply@ticketbox.vn>',
+                to: email,
+                subject: `💌 Thư Mời Khách Danh Dự - Sự kiện ${concertName}`,
+                html: htmlBody,
+            });
+            logger.info({ email }, '[EmailProvider] ✅ Đã gửi thư mời VIP');
+            return true;
+        } catch (err) {
+            logger.error({ err, email }, '[EmailProvider] ❌ Lỗi gửi thư mời VIP');
             return false;
         }
     }
@@ -160,12 +213,17 @@ export class ZaloNotificationProvider implements NotificationProvider {
     name = 'Zalo OA';
 
     async sendTicketConfirmation(email: string, tickets: TicketDetail[]): Promise<boolean> {
-        console.log(`💬 [ZALO PROVIDER STUB] Gửi tin nhắn xác nhận mua vé tới: ${email}`);
+        logger.info({ email }, '[ZALO PROVIDER STUB] Gửi tin nhắn xác nhận mua vé');
         return true;
     }
 
     async sendConcertReminder(email: string, concertName: string, startTime: Date): Promise<boolean> {
-        console.log(`💬 [ZALO PROVIDER STUB] Gửi nhắc nhở concert tới: ${email}`);
+        logger.info({ email }, '[ZALO PROVIDER STUB] Gửi nhắc nhở concert');
+        return true;
+    }
+
+    async sendVIPInvitation(email: string, guestName: string, concertName: string, startTime: Date): Promise<boolean> {
+        logger.info({ email }, '[ZALO PROVIDER STUB] Gửi thư mời VIP qua Zalo OA');
         return true;
     }
 }
@@ -192,14 +250,14 @@ export class NotificationService {
 
     public addProvider(provider: NotificationProvider) {
         this.providers.push(provider);
-        console.log(`[NotificationService] Đã đăng ký thêm provider: ${provider.name}`);
+        logger.info({ providerName: provider.name }, '[NotificationService] Đã đăng ký thêm provider');
     }
 
     async notifyTicketConfirmation(email: string, tickets: TicketDetail[]): Promise<void> {
         await Promise.all(
             this.providers.map(p =>
                 p.sendTicketConfirmation(email, tickets).catch(err => {
-                    console.error(`[NotificationService] Lỗi gửi qua ${p.name}:`, err);
+                    logger.error({ err, provider: p.name }, '[NotificationService] Lỗi gửi ticket confirmation');
                     return false;
                 })
             )
@@ -210,7 +268,18 @@ export class NotificationService {
         await Promise.all(
             this.providers.map(p =>
                 p.sendConcertReminder(email, concertName, startTime).catch(err => {
-                    console.error(`[NotificationService] Lỗi gửi nhắc nhở qua ${p.name}:`, err);
+                    logger.error({ err, provider: p.name }, '[NotificationService] Lỗi gửi nhắc nhở concert');
+                    return false;
+                })
+            )
+        );
+    }
+
+    async notifyVIPInvitation(email: string, guestName: string, concertName: string, startTime: Date): Promise<void> {
+        await Promise.all(
+            this.providers.map(p =>
+                p.sendVIPInvitation(email, guestName, concertName, startTime).catch(err => {
+                    logger.error({ err, provider: p.name }, '[NotificationService] Lỗi gửi thư mời VIP');
                     return false;
                 })
             )

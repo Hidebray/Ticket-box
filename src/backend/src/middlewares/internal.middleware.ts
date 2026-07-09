@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
+import logger from '../utils/logger';
 
 /**
  * [SEC-04] Middleware bảo vệ các internal worker routes.
@@ -21,7 +22,7 @@ export const requireInternalSecret = (req: Request, res: Response, next: NextFun
         const secretBuf = Buffer.from(secret);
 
         if (providedBuf.length !== secretBuf.length || !crypto.timingSafeEqual(providedBuf, secretBuf)) {
-            console.warn('[Internal] Invalid internal secret from:', req.ip);
+            logger.warn({ ip: req.ip }, '[Internal] Invalid internal secret from IP');
             res.status(403).json({ message: 'Forbidden: Invalid internal secret' });
             return;
         }

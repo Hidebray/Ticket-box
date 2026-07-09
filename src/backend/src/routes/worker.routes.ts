@@ -2,7 +2,9 @@ import { Router } from 'express';
 import { taskQueue } from '../queue';
 import { importVipGuests } from '../workers/csv-import.worker';
 import { requireInternalSecret } from '../middlewares/internal.middleware';
+import { validate, triggerJobSchema } from '../types/validation.schemas';
 import path from 'path';
+import logger from '../utils/logger';
 
 const router = Router();
 
@@ -28,21 +30,27 @@ router.get('/trigger-csv', async (req, res) => {
 
     // Khởi chạy ngầm không cần đợi kết quả trả về
     importVipGuests(csvPath, concertId as string, ticketTypeId as string)
-        .then(() => console.log('[Worker] Import VIP success'))
-        .catch(err => console.error('[Worker] Import VIP failed:', err));
+        .then(() => logger.info('[Worker] Import VIP success'))
+        .catch(err => logger.error({ err }, '[Worker] Import VIP failed'));
 
     res.json({ message: 'CSV Import started in background. Check terminal logs.' });
 });
 
 // Endpoint 2: Đẩy 1 Job vào Message Queue (BullMQ) để chạy ngầm
-router.post('/trigger-job', async (req, res) => {
+router.post('/trigger-job', validate(triggerJobSchema), async (req, res) => {
     const { type, payload } = req.body;
 
     if (type === 'generate-ai-bio') {
-        await taskQueue.add('generate-ai-bio', payload);
+        await taskQueue.add('generate-ai-bio', payload, {
+            removeOnComplete: true,
+            removeOnFail: { count: 1000 }
+        });
         res.json({ message: 'AI Bio Job Added to Queue' });
     } else if (type === 'send-email') {
-        await taskQueue.add('send-email', payload);
+        await taskQueue.add('send-email', payload, {
+            removeOnComplete: { count: 100 },
+            removeOnFail: { count: 1000 }
+        });
         res.json({ message: 'Email Job Added to Queue' });
     } else {
         res.status(400).json({ message: 'Invalid job type' });

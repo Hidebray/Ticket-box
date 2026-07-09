@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import routes from './routes';
 import { globalLimiter } from './middlewares/rate-limit.middleware';
+import logger from './utils/logger';
 
 const app = express();
 
@@ -38,7 +39,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 // Global error handler
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-    console.error(err.stack);
+    logger.error({ err }, 'Unhandled Exception');
     res.status(err.status || 500).json({
         message: err.message || 'Internal Server Error',
     });

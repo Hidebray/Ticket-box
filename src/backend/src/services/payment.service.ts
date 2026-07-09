@@ -1,6 +1,7 @@
 import CircuitBreaker from 'opossum';
 import crypto from 'crypto';
 import querystring from 'querystring';
+import logger from '../utils/logger';
 
 const tmnCode = process.env.VNPAY_TMN_CODE || 'DEMO1234';
 const hashSecret = process.env.VNPAY_HASH_SECRET || 'SECRET1234567890';
@@ -55,6 +56,6 @@ const breakerOptions = {
 
 export const paymentCircuitBreaker = new CircuitBreaker(generateVnpayUrl, breakerOptions);
 
-paymentCircuitBreaker.on('open', () => console.log('Circuit Breaker OPEN - Payment Gateway is down'));
-paymentCircuitBreaker.on('halfOpen', () => console.log('Circuit Breaker HALF-OPEN - Trial request allowed'));
-paymentCircuitBreaker.on('close', () => console.log('Circuit Breaker CLOSED - Payment Gateway recovered'));
+paymentCircuitBreaker.on('open', () => logger.warn('Circuit Breaker OPEN - Payment Gateway is down'));
+paymentCircuitBreaker.on('halfOpen', () => logger.info('Circuit Breaker HALF-OPEN - Trial request allowed'));
+paymentCircuitBreaker.on('close', () => logger.info('Circuit Breaker CLOSED - Payment Gateway recovered'));

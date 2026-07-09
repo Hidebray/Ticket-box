@@ -91,7 +91,7 @@ describe('Order Controller - createOrder', () => {
         // 1. Verify Error response
         expect(mockStatus).toHaveBeenCalledWith(400);
         expect(mockJson).toHaveBeenCalledWith(expect.objectContaining({
-            message: 'Failed to complete order. Tickets might be taken.'
+            message: 'Hệ thống đang bận hoặc có lỗi cơ sở dữ liệu. Vui lòng thử lại sau.'
         }));
 
         // 2. Verify Redis Rollback (INCR) happened!

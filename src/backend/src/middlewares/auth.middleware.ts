@@ -19,7 +19,11 @@ export const authenticate = (req: Request, res: Response, next: NextFunction): v
         req.user = decoded;
         next();
     } catch (error) {
-        res.status(401).json({ message: 'Unauthorized - Invalid token' });
+        if (error instanceof jwt.TokenExpiredError) {
+            res.status(401).json({ message: 'Unauthorized - Token expired', code: 'TOKEN_EXPIRED' });
+        } else {
+            res.status(401).json({ message: 'Unauthorized - Invalid token' });
+        }
     }
 };
 

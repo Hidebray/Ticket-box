@@ -35,7 +35,7 @@ describe('Auth Controller - register', () => {
         mockReq.body = { email: 'test@test.com', password: 'password', role: 'AUDIENCE' };
         
         prismaMock.users.findUnique.mockResolvedValueOnce({
-            id: '1', email: 'test@test.com', password: 'hash', role: 'AUDIENCE', created_at: new Date()
+            id: '1', email: 'test@test.com', password: 'hash', role: 'AUDIENCE', created_at: new Date(), organizer_id: null, status: 'ACTIVE'
         });
         
         await register(mockReq as Request, mockRes as Response);
@@ -49,7 +49,7 @@ describe('Auth Controller - register', () => {
         
         prismaMock.users.findUnique.mockResolvedValueOnce(null);
         prismaMock.users.create.mockResolvedValueOnce({
-            id: 'uuid-123', email: 'new@test.com', password: 'hashed-password', role: 'AUDIENCE', created_at: new Date()
+            id: 'uuid-123', email: 'new@test.com', password: 'hashed-password', role: 'AUDIENCE', created_at: new Date(), organizer_id: null, status: 'ACTIVE'
         });
         
         jest.spyOn(bcrypt, 'hash').mockImplementation(() => Promise.resolve('hashed-password') as any);
@@ -65,7 +65,7 @@ describe('Auth Controller - register', () => {
     it('should return 401 for wrong password', async () => {
         mockReq.body = { email: 'test@test.com', password: 'wrong' };
         prismaMock.users.findUnique.mockResolvedValueOnce({
-            id: '1', email: 'test@test.com', password: 'hash', role: 'AUDIENCE', created_at: new Date()
+            id: '1', email: 'test@test.com', password: 'hash', role: 'AUDIENCE', created_at: new Date(), organizer_id: null, status: 'ACTIVE'
         });
         jest.spyOn(bcrypt, 'compare').mockImplementation(() => Promise.resolve(false) as any);
         
@@ -76,7 +76,7 @@ describe('Auth Controller - register', () => {
     it('should return valid JWT token on success', async () => {
         mockReq.body = { email: 'test@test.com', password: 'password' };
         prismaMock.users.findUnique.mockResolvedValueOnce({
-            id: '1', email: 'test@test.com', password: 'hash', role: 'AUDIENCE', created_at: new Date()
+            id: '1', email: 'test@test.com', password: 'hash', role: 'AUDIENCE', created_at: new Date(), organizer_id: null, status: 'ACTIVE'
         });
         jest.spyOn(bcrypt, 'compare').mockImplementation(() => Promise.resolve(true) as any);
         
