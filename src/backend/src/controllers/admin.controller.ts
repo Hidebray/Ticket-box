@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import redisClient from '../config/redis';
 import crypto from 'crypto';
 import fs from 'fs';
+import logger from '../utils/logger';
 const pdf = require('pdf-parse');
 
 
@@ -22,22 +23,32 @@ export const getAdminConcerts = async (req: Request, res: Response): Promise<voi
                 ticket_types: true
             }
         });
-        res.json(concerts);
+        
+        const formattedConcerts = concerts.map(c => ({
+            ...c,
+            ticket_types: c.ticket_types.map(t => ({
+                ...t,
+                price: Number(t.price)
+            }))
+        }));
+        
+        res.json(formattedConcerts);
     } catch (error) {
-        console.error('Error fetching admin concerts:', error);
+        logger.error({ error }, 'Error fetching admin concerts');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };
 
 export const createConcert = async (req: Request, res: Response): Promise<void> => {
     try {
-        const { name, description, start_time, status } = req.body;
+        const { name, description, location, start_time, status } = req.body;
         
         const concert = await prisma.concerts.create({
             data: {
                 organizer_id: req.user?.id,
                 name,
                 description,
+                location: location || 'Đang cập nhật',
                 start_time: new Date(start_time),
                 status
             }
@@ -48,7 +59,7 @@ export const createConcert = async (req: Request, res: Response): Promise<void> 
         
         res.status(201).json(concert);
     } catch (error) {
-        console.error('Error creating concert:', error);
+        logger.error({ error }, 'Error creating concert');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };
@@ -56,13 +67,16 @@ export const createConcert = async (req: Request, res: Response): Promise<void> 
 export const updateConcert = async (req: Request, res: Response): Promise<void> => {
     try {
         const { id } = req.params;
-        const { name, description, start_time, status } = req.body;
+        const { name, description, location, start_time, status } = req.body;
+        
+        console.log('UPDATE CONCERT REQUEST:', req.body);
         
         const concert = await prisma.concerts.update({
             where: { id: id as string },
             data: {
                 name,
                 description,
+                location,
                 start_time: start_time ? new Date(start_time) : undefined,
                 status
             }
@@ -74,7 +88,7 @@ export const updateConcert = async (req: Request, res: Response): Promise<void> 
         
         res.json(concert);
     } catch (error) {
-        console.error('Error updating concert:', error);
+        logger.error({ error }, 'Error updating concert');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };
@@ -97,8 +111,105 @@ export const createTicketType = async (req: Request, res: Response): Promise<voi
         
         res.status(201).json(ticketType);
     } catch (error) {
-        console.error('Error creating ticket type:', error);
+        logger.error({ error }, 'Error creating ticket type');
         res.status(500).json({ message: 'Internal Server Error' });
+    }
+};
+
+export const deleteConcert = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const id = req.params.id as string;
+        const role = req.user?.role;
+        const userId = req.user?.id;
+
+        // Check if concert exists and belongs to user if ORGANIZER
+        const concert = await prisma.concerts.findUnique({
+            where: { id },
+            include: {
+                ticket_types: {
+                    include: {
+                        _count: {
+                            select: { tickets: true }
+                        }
+                    }
+                }
+            }
+        });
+
+        if (!concert) {
+            res.status(404).json({ message: 'Không tìm thấy sự kiện' });
+            return;
+        }
+
+        if (role !== 'SUPER_ADMIN' && concert.organizer_id !== userId) {
+            res.status(403).json({ message: 'Không có quyền xóa sự kiện này' });
+            return;
+        }
+
+        // Check if any tickets have been generated for any ticket type
+        const totalTickets = concert.ticket_types.reduce((acc: number, tt: any) => acc + tt._count.tickets, 0);
+
+        if (totalTickets > 0) {
+            res.status(400).json({ message: 'Không thể xóa sự kiện đã có vé phát sinh trên hệ thống để đảm bảo an toàn dữ liệu.' });
+            return;
+        }
+
+        await prisma.concerts.delete({
+            where: { id }
+        });
+
+        await redisClient.del('concerts:list');
+        await redisClient.del(`concerts:detail:${id}`);
+
+        res.json({ message: 'Xóa sự kiện thành công' });
+    } catch (error) {
+        logger.error({ error }, 'Error deleting concert');
+        res.status(500).json({ message: 'Lỗi server khi xóa sự kiện' });
+    }
+};
+
+export const deleteTicketType = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const id = req.params.id as string;
+        const role = req.user?.role;
+        const userId = req.user?.id;
+
+        const ticketType = await prisma.ticket_types.findUnique({
+            where: { id },
+            include: {
+                concerts: true,
+                _count: {
+                    select: { tickets: true }
+                }
+            }
+        });
+
+        if (!ticketType) {
+            res.status(404).json({ message: 'Không tìm thấy hạng vé' });
+            return;
+        }
+
+        if (role !== 'SUPER_ADMIN' && ticketType.concerts.organizer_id !== userId) {
+            res.status(403).json({ message: 'Không có quyền xóa hạng vé này' });
+            return;
+        }
+
+        if (ticketType._count.tickets > 0) {
+            res.status(400).json({ message: 'Không thể xóa hạng vé đã có vé phát sinh trên hệ thống.' });
+            return;
+        }
+
+        await prisma.ticket_types.delete({
+            where: { id }
+        });
+
+        await redisClient.del('concerts:list');
+        await redisClient.del(`concerts:detail:${ticketType.concert_id}`);
+
+        res.json({ message: 'Xóa hạng vé thành công' });
+    } catch (error) {
+        logger.error({ error }, 'Error deleting ticket type');
+        res.status(500).json({ message: 'Lỗi server khi xóa hạng vé' });
     }
 };
 
@@ -108,12 +219,19 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
         const userId = req.user?.id;
         const isSuperAdmin = role === 'SUPER_ADMIN';
 
-        const cacheKey = `dashboard:stats:${role}:${userId}`;
-        const cachedStats = await redisClient.get(cacheKey);
+        const { refresh, days } = req.query;
+        let daysNum = 7;
+        if (days === '30') daysNum = 30;
+        if (days === 'all') daysNum = 3650; // 10 years
 
-        if (cachedStats) {
-            res.json(JSON.parse(cachedStats));
-            return;
+        const cacheKey = `dashboard:stats:${role}:${userId}:${daysNum}`;
+        
+        if (refresh !== 'true') {
+            const cachedStats = await redisClient.get(cacheKey);
+            if (cachedStats) {
+                res.json(JSON.parse(cachedStats));
+                return;
+            }
         }
 
         const concertWhere = isSuperAdmin ? {} : { organizer_id: userId };
@@ -125,18 +243,21 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
         let revenueQuery;
         let chartQuery;
         let ticketsQuery;
+        let pieChartQuery;
 
         if (isSuperAdmin) {
             ticketsQuery = await prisma.$queryRaw`
                 SELECT COUNT(*) as total
                 FROM tickets t
                 WHERE t.status IN ('SOLD', 'CHECKED_IN')
+                  AND t.created_at >= NOW() - (${daysNum} * INTERVAL '1 day')
             `;
             revenueQuery = await prisma.$queryRaw`
                 SELECT SUM(tt.price) as total_revenue
                 FROM tickets t
                 JOIN ticket_types tt ON t.ticket_type_id = tt.id
                 WHERE t.status IN ('SOLD', 'CHECKED_IN')
+                  AND t.created_at >= NOW() - (${daysNum} * INTERVAL '1 day')
             `;
             chartQuery = await prisma.$queryRaw`
                 SELECT 
@@ -146,9 +267,19 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
                 FROM tickets t
                 JOIN ticket_types tt ON t.ticket_type_id = tt.id
                 WHERE t.status IN ('SOLD', 'CHECKED_IN') 
-                  AND t.created_at >= NOW() - INTERVAL '7 days'
+                  AND t.created_at >= NOW() - (${daysNum} * INTERVAL '1 day')
                 GROUP BY TO_CHAR(t.created_at, 'DD/MM')
                 ORDER BY TO_CHAR(t.created_at, 'DD/MM') ASC
+            `;
+            pieChartQuery = await prisma.$queryRaw`
+                SELECT c.name, SUM(tt.price) as value
+                FROM tickets t
+                JOIN ticket_types tt ON t.ticket_type_id = tt.id
+                JOIN concerts c ON tt.concert_id = c.id
+                WHERE t.status IN ('SOLD', 'CHECKED_IN')
+                  AND t.created_at >= NOW() - (${daysNum} * INTERVAL '1 day')
+                GROUP BY c.id, c.name
+                ORDER BY value DESC
             `;
         } else {
             // Lọc theo organizer_id
@@ -159,6 +290,7 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
                 JOIN concerts c ON tt.concert_id = c.id
                 WHERE t.status IN ('SOLD', 'CHECKED_IN')
                   AND c.organizer_id = ${userId}::uuid
+                  AND t.created_at >= NOW() - (${daysNum} * INTERVAL '1 day')
             `;
             revenueQuery = await prisma.$queryRaw`
                 SELECT SUM(tt.price) as total_revenue
@@ -167,6 +299,7 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
                 JOIN concerts c ON tt.concert_id = c.id
                 WHERE t.status IN ('SOLD', 'CHECKED_IN')
                   AND c.organizer_id = ${userId}::uuid
+                  AND t.created_at >= NOW() - (${daysNum} * INTERVAL '1 day')
             `;
             chartQuery = await prisma.$queryRaw`
                 SELECT 
@@ -177,10 +310,21 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
                 JOIN ticket_types tt ON t.ticket_type_id = tt.id
                 JOIN concerts c ON tt.concert_id = c.id
                 WHERE t.status IN ('SOLD', 'CHECKED_IN') 
-                  AND t.created_at >= NOW() - INTERVAL '7 days'
+                  AND t.created_at >= NOW() - (${daysNum} * INTERVAL '1 day')
                   AND c.organizer_id = ${userId}::uuid
                 GROUP BY TO_CHAR(t.created_at, 'DD/MM')
                 ORDER BY TO_CHAR(t.created_at, 'DD/MM') ASC
+            `;
+            pieChartQuery = await prisma.$queryRaw`
+                SELECT c.name, SUM(tt.price) as value
+                FROM tickets t
+                JOIN ticket_types tt ON t.ticket_type_id = tt.id
+                JOIN concerts c ON tt.concert_id = c.id
+                WHERE t.status IN ('SOLD', 'CHECKED_IN')
+                  AND c.organizer_id = ${userId}::uuid
+                  AND t.created_at >= NOW() - (${daysNum} * INTERVAL '1 day')
+                GROUP BY c.id, c.name
+                ORDER BY value DESC
             `;
         }
         
@@ -193,11 +337,17 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
             veBan: Number(r.veBan)
         }));
 
+        const pieChartData = (pieChartQuery as { name: string, value: number }[]).map(r => ({
+            name: r.name,
+            value: Number(r.value)
+        }));
+
         const responseData = {
             totalConcerts,
             totalTicketsSold,
             totalRevenue,
-            chartData
+            chartData,
+            pieChartData
         };
 
         // Cache for 5 minutes (300 seconds)
@@ -205,7 +355,7 @@ export const getDashboardStats = async (req: Request, res: Response): Promise<vo
 
         res.json(responseData);
     } catch (error) {
-        console.error('Error fetching dashboard stats:', error);
+        logger.error({ error }, 'Error fetching dashboard stats');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };
@@ -217,12 +367,35 @@ import { guestUploadQueue } from '../config/queue';
 export const uploadGuestsCSV = async (req: Request, res: Response): Promise<void> => {
     try {
         const file = req.file;
-        const { concertId, ticketTypeId } = req.body;
+        const { concertId } = req.body;
 
-        if (!file || !concertId || !ticketTypeId) {
-            res.status(400).json({ message: 'Missing file, concertId, or ticketTypeId' });
+        if (!file || !concertId) {
+            res.status(400).json({ message: 'Missing file or concertId' });
             return;
         }
+
+        // Auto find or create GUEST ticket type for this concert
+        let guestTicketType = await prisma.ticket_types.findFirst({
+            where: {
+                concert_id: concertId,
+                type: 'GUEST'
+            }
+        });
+
+        if (!guestTicketType) {
+            guestTicketType = await prisma.ticket_types.create({
+                data: {
+                    concert_id: concertId,
+                    name: 'Thư Mời VIP',
+                    total_quantity: 0,
+                    max_per_user: 10,
+                    price: 0,
+                    type: 'GUEST'
+                }
+            });
+        }
+        
+        const ticketTypeId = guestTicketType.id;
 
         const results: Record<string, unknown>[] = [];
         fs.createReadStream(file.path)
@@ -246,7 +419,7 @@ export const uploadGuestsCSV = async (req: Request, res: Response): Promise<void
             });
 
     } catch (error) {
-        console.error('Error uploading CSV:', error);
+        logger.error({ error }, 'Error uploading CSV');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };
@@ -274,7 +447,7 @@ export const getUploadProgress = async (req: Request, res: Response): Promise<vo
             failedReason
         });
     } catch (error) {
-        console.error('Error getting job progress:', error);
+        logger.error({ error }, 'Error getting job progress');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };
@@ -328,7 +501,7 @@ export const saveSeatingMap = async (req: Request, res: Response): Promise<void>
             }
         }
 
-        await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        await prisma.$transaction(async (tx) => {
             // Row-level lock on ticket_types to prevent concurrent order creation or another map save
             await tx.$queryRaw`SELECT id FROM ticket_types WHERE id = ${ticketTypeId}::uuid FOR UPDATE`;
 
@@ -382,7 +555,7 @@ export const saveSeatingMap = async (req: Request, res: Response): Promise<void>
         });
 
     } catch (error: unknown) {
-        console.error('Error saving seating map:', error);
+        logger.error({ error }, 'Error saving seating map');
         if (error instanceof Error && error.message === 'Cannot modify seating map after tickets are sold') {
             res.status(400).json({ message: error.message });
             return;
@@ -415,10 +588,13 @@ export const uploadConcertBioPDF = async (req: Request, res: Response): Promise<
         const dataBuffer = fs.readFileSync(file.path);
         let pdfText = '';
         try {
-            const parsedPdf = await pdf(dataBuffer);
+            const { PDFParse } = require('pdf-parse');
+            const parser = new PDFParse({ data: dataBuffer });
+            const parsedPdf = await parser.getText();
             pdfText = parsedPdf.text || '';
+            await parser.destroy();
         } catch (pdfErr) {
-            console.error('Error parsing PDF:', pdfErr);
+            logger.error({ err: pdfErr }, 'Error parsing PDF');
             fs.unlinkSync(file.path);
             res.status(400).json({ message: 'Không thể đọc nội dung file PDF. Vui lòng kiểm tra định dạng file.' });
             return;
@@ -438,9 +614,9 @@ export const uploadConcertBioPDF = async (req: Request, res: Response): Promise<
 
         if (apiKey) {
             try {
-                console.log('[AI Artist Bio] Gọi Gemini API...');
+                logger.info('[AI Artist Bio] Gọi Gemini API...');
                 const response = await fetch(
-                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
                     {
                         method: 'POST',
                         headers: {
@@ -460,16 +636,16 @@ export const uploadConcertBioPDF = async (req: Request, res: Response): Promise<
                     const resData = await response.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
                     bio = resData?.candidates?.[0]?.content?.parts?.[0]?.text || '';
                 } else {
-                    console.error('[AI Artist Bio] Gemini API trả về trạng thái lỗi:', response.status);
+                    logger.error({ status: response.status }, '[AI Artist Bio] Gemini API trả về trạng thái lỗi');
                 }
             } catch (aiError: unknown) {
-                console.error('[AI Artist Bio] Gemini API gặp sự cố, chuyển sang Fallback:', aiError instanceof Error ? aiError.message : String(aiError));
+                logger.error({ err: aiError instanceof Error ? aiError.message : String(aiError) }, '[AI Artist Bio] Gemini API gặp sự cố, chuyển sang Fallback');
             }
         }
 
         // 3. Fallback thông minh nếu không có API key hoặc API lỗi
         if (!bio) {
-            console.log('[AI Artist Bio] Sử dụng Intelligent Fallback Generator...');
+            logger.info('[AI Artist Bio] Sử dụng Intelligent Fallback Generator...');
             
             // Trích xuất một vài câu hoặc đoạn có ý nghĩa từ văn bản PDF
             const lines = pdfText.split('\n')
@@ -484,15 +660,8 @@ export const uploadConcertBioPDF = async (req: Request, res: Response): Promise<
         // Làm sạch văn bản bio
         bio = bio.trim().replace(/\s+/g, ' ');
 
-        // 4. Lưu vào cơ sở dữ liệu
-        await prisma.concerts.update({
-            where: { id: concertId },
-            data: { description: bio }
-        });
-
-        // 5. Xóa cache Redis
-        await redisClient.del('concerts:list');
-        await redisClient.del(`concerts:detail:${concertId}`);
+        // Không lưu tự động vào DB nữa để người dùng có thể tự chỉnh sửa trên UI
+        // Dữ liệu sẽ được lưu khi Admin bấm cập nhật ở Frontend
 
         res.json({
             message: 'Tạo Artist Bio bằng AI thành công!',
@@ -500,7 +669,7 @@ export const uploadConcertBioPDF = async (req: Request, res: Response): Promise<
         });
 
     } catch (error) {
-        console.error('Error in uploadConcertBioPDF:', error);
+        logger.error({ error }, 'Error in uploadConcertBioPDF');
         res.status(500).json({ message: 'Internal Server Error' });
     }
 };

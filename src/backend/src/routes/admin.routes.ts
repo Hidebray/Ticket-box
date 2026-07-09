@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
-import { validate, createConcertSchema, createTicketTypeSchema, seatingMapSchema } from '../types/validation.schemas';
+import { validate, createConcertSchema, updateConcertSchema, createTicketTypeSchema, seatingMapSchema } from '../types/validation.schemas';
 import { 
     getAdminConcerts, 
     createConcert, 
@@ -10,7 +10,9 @@ import {
     uploadGuestsCSV,
     getUploadProgress,
     saveSeatingMap,
-    uploadConcertBioPDF
+    uploadConcertBioPDF,
+    deleteConcert,
+    deleteTicketType
 } from '../controllers/admin.controller';
 
 const router = Router();
@@ -20,7 +22,10 @@ router.use(authenticate, authorize(['ORGANIZER']));
 
 import multer from 'multer';
 
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ 
+    dest: 'uploads/',
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
 
 // Dashboard
 router.get('/dashboard', getDashboardStats);
@@ -28,10 +33,12 @@ router.get('/dashboard', getDashboardStats);
 // Concerts CRUD
 router.get('/concerts', getAdminConcerts);
 router.post('/concerts', validate(createConcertSchema), createConcert);
-router.put('/concerts/:id', validate(createConcertSchema), updateConcert);
+router.put('/concerts/:id', validate(updateConcertSchema), updateConcert);
+router.delete('/concerts/:id', deleteConcert);
 
 // Ticket Types
 router.post('/ticket-types', validate(createTicketTypeSchema), createTicketType);
+router.delete('/ticket-types/:id', deleteTicketType);
 
 // Upload CSV Guests
 router.post('/guests/upload', upload.single('file'), uploadGuestsCSV);

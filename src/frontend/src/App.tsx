@@ -14,6 +14,8 @@ import AdminLayout from './components/AdminLayout';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminConcerts from './pages/AdminConcerts';
 import AdminGuests from './pages/AdminGuests';
+import AdminUsers from './pages/AdminUsers';
+import ProtectedRoute from './components/ProtectedRoute';
 import StaffLayout from './layouts/StaffLayout';
 import StaffScanner from './pages/staff/StaffScanner';
 import StaffSync from './pages/staff/StaffSync';
@@ -55,22 +57,31 @@ function App() {
             <Route path="/" element={<Home />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
-            <Route path="/dashboard" element={<UserDashboard />} />
-            <Route path="/checkout/:id" element={<Checkout />} />
             <Route path="/concerts/:id" element={<ConcertDetail />} />
+            
+            {/* Authenticated Customer Routes */}
+            <Route element={<ProtectedRoute />}>
+              <Route path="/dashboard" element={<UserDashboard />} />
+              <Route path="/checkout/:id" element={<Checkout />} />
+            </Route>
           </Route>
 
           {/* Admin Routes */}
-          <Route path="/admin" element={<AdminLayout />}>
-            <Route index element={<AdminDashboard />} />
-            <Route path="concerts" element={<AdminConcerts />} />
-            <Route path="guests" element={<AdminGuests />} />
+          <Route path="/admin" element={<ProtectedRoute allowedRoles={['ORGANIZER', 'SUPER_ADMIN']} />}>
+            <Route element={<AdminLayout />}>
+              <Route index element={<AdminDashboard />} />
+              <Route path="concerts" element={<AdminConcerts />} />
+              <Route path="guests" element={<AdminGuests />} />
+              <Route path="users" element={<AdminUsers />} />
+            </Route>
           </Route>
 
           {/* Staff Check-in Routes */}
-          <Route path="/staff" element={<StaffLayout />}>
-            <Route path="checkin" element={<StaffScanner />} />
-            <Route path="sync" element={<StaffSync />} />
+          <Route path="/staff" element={<ProtectedRoute allowedRoles={['STAFF', 'SUPER_ADMIN']} />}>
+            <Route element={<StaffLayout />}>
+              <Route path="checkin" element={<StaffScanner />} />
+              <Route path="sync" element={<StaffSync />} />
+            </Route>
           </Route>
         </Routes>
       </AuthProvider>

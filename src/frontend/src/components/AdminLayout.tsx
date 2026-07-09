@@ -1,26 +1,19 @@
-import { useEffect } from 'react';
 import { useNavigate, Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, Calendar, Users, LogOut, Ticket } from 'lucide-react';
+import { LayoutDashboard, Calendar, Users, LogOut, Ticket, UserCog } from 'lucide-react';
 
 export default function AdminLayout() {
   const { user, logout } = useAuth();
-  const navigate = useNavigate();
   const location = useLocation();
+  const navigate = useNavigate();
 
-  useEffect(() => {
-    if (!user || !['ORGANIZER', 'SUPER_ADMIN'].includes(user.role)) {
-      alert('Bạn không có quyền truy cập trang này!');
-      navigate('/');
-    }
-  }, [user, navigate]);
-
-  if (!user || !['ORGANIZER', 'SUPER_ADMIN'].includes(user.role)) return null;
+  if (!user) return null;
 
   const navItems = [
     { name: 'Dashboard', path: '/admin', icon: LayoutDashboard },
     { name: 'Sự kiện (Concerts)', path: '/admin/concerts', icon: Calendar },
-    { name: 'Danh sách Khách mời (CSV)', path: '/admin/guests', icon: Users }
+    { name: 'Danh sách Khách mời', path: '/admin/guests', icon: Users },
+    { name: 'Quản lý Tài khoản', path: '/admin/users', icon: UserCog }
   ];
 
   return (
