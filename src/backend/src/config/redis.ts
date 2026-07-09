@@ -1,16 +1,17 @@
 import Redis from 'ioredis';
 import dotenv from 'dotenv';
+import logger from '../utils/logger';
 
 dotenv.config();
 
-const redisClient = new Redis(process.env.REDIS_URL || 'redis://localhost:6380');
+const redisClient = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 
 redisClient.on('error', (err) => {
-    console.error('Redis Client Error', err);
+    logger.error({ err }, 'Redis Client Error');
 });
 
 redisClient.on('connect', () => {
-    console.log('Redis connected successfully');
+    logger.debug('Redis connected successfully');
 });
 
 export default redisClient;

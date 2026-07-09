@@ -12,7 +12,7 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./src/data/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./src/backend/prisma/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - ticketbox_net
     restart: unless-stopped

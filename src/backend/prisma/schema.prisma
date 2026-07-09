@@ -14,12 +14,15 @@ model concerts {
   organizer_id String?        @db.Uuid
   name         String         @db.VarChar(255)
   description  String?        @db.Text
+  location     String         @default("Đang cập nhật") @db.VarChar(255)
   seating_map  Json?
   start_time   DateTime       @db.Timestamptz(6)
   status       String         @db.VarChar(50)
   created_at   DateTime?      @default(now()) @db.Timestamptz(6)
   users        users?         @relation(fields: [organizer_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
   ticket_types ticket_types[]
+
+  @@index([organizer_id], map: "idx_concerts_organizer_id")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -28,12 +31,14 @@ model orders {
   user_id         String    @db.Uuid
   status          String    @db.VarChar(50)
   idempotency_key String    @unique @db.VarChar(255)
+  ticket_snapshot Json?
   created_at      DateTime? @default(now()) @db.Timestamptz(6)
   users           users     @relation(fields: [user_id], references: [id], onUpdate: NoAction)
   tickets         tickets[]
 
   @@index([idempotency_key], map: "idx_orders_idempotency_key")
   @@index([user_id], map: "idx_orders_user_id")
+  @@index([status, created_at], map: "idx_orders_status_created")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -44,6 +49,7 @@ model ticket_types {
   total_quantity Int
   max_per_user   Int
   price          Decimal   @db.Decimal(12, 2)
+  type           String    @default("PUBLIC") @db.VarChar(50)
   created_at     DateTime? @default(now()) @db.Timestamptz(6)
   concerts       concerts  @relation(fields: [concert_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   tickets        tickets[]
@@ -66,18 +72,25 @@ model tickets {
 
   @@index([order_id], map: "idx_tickets_order_id")
   @@index([ticket_type_id], map: "idx_tickets_ticket_type_id")
-  @@index([ticket_type_id, status], map: "idx_tickets_type_status")
+  @@index([ticket_type_id, status, seat_label], map: "idx_tickets_type_status_seat")
+  @@index([order_id, status], map: "idx_tickets_order_status")
   @@index([user_id], map: "idx_tickets_user_id")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model users {
-  id         String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
-  email      String     @unique @db.VarChar(255)
-  role       String     @db.VarChar(50)
-  created_at DateTime?  @default(now()) @db.Timestamptz(6)
-  password   String     @db.VarChar(255)
-  concerts   concerts[]
-  orders     orders[]
-  tickets    tickets[]
+  id           String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  email        String     @unique @db.VarChar(255)
+  role         String     @db.VarChar(50)
+  created_at   DateTime?  @default(now()) @db.Timestamptz(6)
+  password     String     @db.VarChar(255)
+  organizer_id String?    @db.Uuid
+  status       String     @default("ACTIVE") @db.VarChar(50)
+
+  organizer    users?     @relation("StaffToOrganizer", fields: [organizer_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  staffs       users[]    @relation("StaffToOrganizer")
+
+  concerts     concerts[]
+  orders       orders[]
+  tickets      tickets[]
 }
