@@ -2,13 +2,14 @@ import { useCallback, useState, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
-import { UploadCloud, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+import { UploadCloud, CheckCircle2, AlertCircle, RefreshCw, Download } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { getErrorMessage } from '../utils/getErrorMessage';
 
 export default function AdminGuests() {
   const { token } = useAuth();
   const [concerts, setConcerts] = useState<any[]>([]);
   const [selectedConcertId, setSelectedConcertId] = useState('');
-  const [selectedTicketTypeId, setSelectedTicketTypeId] = useState('');
 
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -22,12 +23,12 @@ export default function AdminGuests() {
     // Fetch concerts and their ticket types to populate dropdowns
     const fetchConcerts = async () => {
       try {
-        const res = await axios.get(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/concerts`, {
+        const res = await axios.get(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/concerts`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         setConcerts(res.data);
       } catch (err) {
-        console.error(err);
+        toast.error(getErrorMessage(err, 'Lỗi tải danh sách sự kiện'));
       }
     };
     fetchConcerts();
@@ -45,9 +46,20 @@ export default function AdminGuests() {
     maxFiles: 1
   });
 
+  const downloadSampleCSV = () => {
+    const csvContent = "data:text/csv;charset=utf-8,\uFEFFemail,name\nnguyenvana@example.com,Nguyen Van A\ntranthib@example.com,Tran Thi B";
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "sample_guests.csv");
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
   const handleUpload = async () => {
-    if (!file || !selectedConcertId || !selectedTicketTypeId) {
-      alert('Vui lòng chọn Sự kiện, Hạng vé và File CSV!');
+    if (!file || !selectedConcertId) {
+      alert('Vui lòng chọn Sự kiện và File CSV!');
       return;
     }
 
@@ -58,10 +70,9 @@ export default function AdminGuests() {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('concertId', selectedConcertId);
-    formData.append('ticketTypeId', selectedTicketTypeId);
 
     try {
-      const res = await axios.post(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/guests/upload`, formData, {
+      const res = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/guests/upload`, formData, {
         headers: { 
           Authorization: `Bearer ${token}`,
           'Content-Type': 'multipart/form-data'
@@ -70,8 +81,7 @@ export default function AdminGuests() {
       
       setJobId(res.data.jobId);
     } catch (err) {
-      console.error(err);
-      alert('Lỗi khi upload file');
+      toast.error(getErrorMessage(err, 'Lỗi khi upload file'));
       setIsUploading(false);
     }
   };
@@ -81,7 +91,7 @@ export default function AdminGuests() {
 
     pollingInterval.current = setInterval(async () => {
       try {
-        const res = await axios.get(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/guests/progress/${jobId}`, {
+        const res = await axios.get(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/guests/progress/${jobId}`, {
           headers: { Authorization: `Bearer ${token}` }
         });
 
@@ -100,14 +110,12 @@ export default function AdminGuests() {
           alert('Worker thất bại: ' + failedReason);
         }
       } catch (err) {
-        console.error('Lỗi khi polling job status', err);
+        return; // Silent error, will retry next interval
       }
     }, 1000);
 
     return () => clearInterval(pollingInterval.current);
   }, [jobId, token]);
-
-  const selectedConcert = concerts.find(c => c.id === selectedConcertId);
 
   return (
     <div className="text-white max-w-4xl mx-auto">
@@ -115,38 +123,36 @@ export default function AdminGuests() {
 
       <div className="bg-slate-800 p-8 rounded-3xl border border-slate-700 shadow-2xl mb-8">
         <h2 className="text-xl font-bold mb-6 border-b border-slate-700 pb-4">1. Cấu hình Cấp vé</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-          <div>
-            <label className="block text-sm font-medium text-slate-400 mb-2">Chọn Sự kiện</label>
-            <select 
-              value={selectedConcertId} 
-              onChange={e => { setSelectedConcertId(e.target.value); setSelectedTicketTypeId(''); }}
-              className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 focus:border-primary focus:ring-1 focus:ring-primary"
-            >
-              <option value="">-- Chọn sự kiện --</option>
-              {concerts.map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-400 mb-2">Chọn Hạng vé cấp cho khách</label>
-            <select 
-              value={selectedTicketTypeId} 
-              onChange={e => setSelectedTicketTypeId(e.target.value)}
-              disabled={!selectedConcertId}
-              className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 focus:border-primary focus:ring-1 focus:ring-primary disabled:opacity-50"
-            >
-              <option value="">-- Chọn hạng vé --</option>
-              {selectedConcert?.ticket_types?.map((t: any) => (
-                <option key={t.id} value={t.id}>{t.name} (SL: {t.total_quantity})</option>
-              ))}
-            </select>
-          </div>
+        <div className="mb-8">
+          <label className="block text-sm font-medium text-slate-400 mb-2">Chọn Sự kiện</label>
+          <select 
+            value={selectedConcertId} 
+            onChange={e => { 
+              setSelectedConcertId(e.target.value); 
+              setJobId(null);
+              setJobResult(null);
+              setProgress(0);
+              setFile(null);
+            }}
+            className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 focus:border-primary focus:ring-1 focus:ring-primary"
+          >
+            <option value="">-- Chọn sự kiện --</option>
+            {concerts.map(c => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
         </div>
 
-        <h2 className="text-xl font-bold mb-6 border-b border-slate-700 pb-4">2. Upload File CSV</h2>
-        <p className="text-sm text-slate-400 mb-4">File CSV phải có cột `email`. Hệ thống sẽ tự động cấp vé cho danh sách email này.</p>
+        <div className="flex justify-between items-center mb-6 border-b border-slate-700 pb-4">
+          <h2 className="text-xl font-bold">2. Upload File CSV</h2>
+          <button 
+            onClick={downloadSampleCSV}
+            className="text-sm text-primary hover:text-rose-400 font-medium flex items-center gap-1 transition-colors"
+          >
+            <Download className="w-4 h-4" /> Tải File Mẫu
+          </button>
+        </div>
+        <p className="text-sm text-slate-400 mb-4">File CSV bắt buộc phải có cột `email`. Có thể tùy chọn thêm cột `name` (mặc định mỗi dòng sẽ được cấp 1 vé).</p>
         
         <div 
           {...getRootProps()} 
@@ -172,7 +178,7 @@ export default function AdminGuests() {
         <div className="mt-8 flex justify-end">
           <button 
             onClick={handleUpload}
-            disabled={!file || !selectedConcertId || !selectedTicketTypeId || isUploading}
+            disabled={!file || !selectedConcertId || isUploading}
             className="bg-primary hover:bg-rose-600 disabled:bg-slate-700 disabled:text-slate-500 text-white font-bold py-3 px-8 rounded-xl transition-all shadow-lg flex items-center gap-2"
           >
             {isUploading ? <><RefreshCw className="w-5 h-5 animate-spin" /> Đang đưa vào Queue...</> : 'Bắt đầu Import'}

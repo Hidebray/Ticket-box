@@ -4,6 +4,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import { Clock, Wallet, ShieldCheck, Tag } from 'lucide-react';
+import { getErrorMessage } from '../utils/getErrorMessage';
 
 export default function Checkout() {
   const { id } = useParams(); // orderId
@@ -50,8 +51,7 @@ export default function Checkout() {
           setLoading(false);
         }
       } catch (err) {
-        console.error(err);
-        toast.error('Không tìm thấy đơn hàng');
+        toast.error(getErrorMessage(err, 'Không tìm thấy đơn hàng'));
         navigate('/');
       }
     };
@@ -99,12 +99,12 @@ export default function Checkout() {
           navigate('/');
         }
       } catch (error) {
-        console.error('Error parsing SSE data', error);
+        return; // Silent error for SSE parse failure
       }
     };
 
     eventSource.onerror = () => {
-      console.error('SSE connection error');
+      // Silent error for SSE connection failure (e.g. network blip)
       eventSource.close();
     };
 
@@ -129,8 +129,7 @@ export default function Checkout() {
         toast.dismiss(toastId);
         // SSE sẽ nhận state SUCCESS và tự redirect
       } catch (err) {
-        console.error('Mock payment failed', err);
-        toast.error('Có lỗi khi xử lý thanh toán! Vui lòng thử lại.');
+        toast.error(getErrorMessage(err, 'Có lỗi khi xử lý thanh toán! Vui lòng thử lại.'));
         setIsProcessing(false);
       }
     }, 2000);
@@ -150,28 +149,54 @@ export default function Checkout() {
   if (loading) return <div className="min-h-screen pt-32 text-center animate-pulse">Đang tải...</div>;
 
   return (
-    <div className="pt-32 min-h-screen pb-24 px-6 max-w-4xl mx-auto">
-      <div className="bg-surface rounded-3xl p-8 md:p-12 border border-slate-700 shadow-2xl relative overflow-hidden">
-        {/* Header */}
-        <div className="text-center mb-10">
-          <h1 className="text-3xl font-bold mb-4">Thanh toán Đơn hàng</h1>
-          <div className={`inline-flex items-center gap-3 px-6 py-3 rounded-full font-mono text-xl font-bold border transition-colors ${
-            timeLeft <= 60
-              ? 'bg-red-500/20 text-red-400 border-red-500/50 animate-pulse'
-              : 'bg-red-500/10 text-red-400 border-red-500/30'
-          }`}>
-            <Clock className="w-6 h-6 animate-pulse" />
-            {formatTime(timeLeft)}
-          </div>
-          <p className="text-slate-400 mt-4 text-sm">Vui lòng hoàn tất thanh toán trong thời gian giữ vé.</p>
-        </div>
+    <div className="pt-20 min-h-screen pb-24 relative overflow-hidden">
+      {/* Background Security Mesh */}
+      <div className="absolute inset-0 bg-slate-950 z-0">
+        <div className="absolute inset-0 opacity-20 mix-blend-screen bg-[radial-gradient(circle_at_50%_50%,rgba(15,23,42,1),rgba(2,6,23,1))]" style={{ backgroundImage: 'radial-gradient(rgba(255, 255, 255, 0.1) 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
+        <div className="absolute top-0 left-0 right-0 h-96 bg-gradient-to-b from-primary/10 to-transparent blur-3xl opacity-30 pointer-events-none" />
+      </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-          {/* Order Details */}
-          <div>
-            <h2 className="text-xl font-bold mb-6 flex items-center border-b border-slate-700 pb-4">
-              <ShieldCheck className="w-5 h-5 mr-2 text-primary" /> Thông tin Đơn hàng
-            </h2>
+      <div className="max-w-4xl mx-auto px-6 relative z-10 pt-12">
+        <div className="glass rounded-3xl p-8 md:p-12 border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] relative overflow-hidden">
+          
+          {/* Lớp Overlay Xử Lý Thanh Toán (Processing State) */}
+          {isProcessing && (
+            <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-md flex flex-col items-center justify-center rounded-3xl">
+              <div className="relative mb-6">
+                <ShieldCheck className="w-20 h-20 text-primary relative z-10 animate-[pulse_1.5s_ease-in-out_infinite]" />
+                <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full" />
+                <div className="absolute -inset-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+              </div>
+              <h3 className="text-2xl font-black text-white tracking-wider mb-2 text-glow">Đang xử lý mã hóa</h3>
+              <p className="text-slate-300 font-medium">Bảo mật giao dịch bằng chuẩn AES-256...</p>
+              <div className="mt-8 flex gap-2">
+                <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
+            </div>
+          )}
+
+          {/* Header */}
+          <div className="text-center mb-10 relative z-10">
+            <h1 className="text-4xl font-black mb-6 text-white tracking-tight">Thanh toán Đơn hàng</h1>
+            <div className={`inline-flex items-center gap-3 px-6 py-3 rounded-2xl font-mono text-2xl font-bold border-2 transition-all duration-300 shadow-lg ${
+              timeLeft <= 60
+                ? 'bg-rose-500/20 text-rose-400 border-rose-500 shadow-[0_0_25px_rgba(244,63,94,0.4)] animate-[pulse_0.5s_ease-in-out_infinite]'
+                : 'bg-slate-800/50 text-emerald-400 border-emerald-500/30'
+            }`}>
+              <Clock className={`w-7 h-7 ${timeLeft <= 60 ? 'text-rose-400' : 'text-emerald-400'}`} />
+              {formatTime(timeLeft)}
+            </div>
+            <p className="text-slate-400 mt-4 font-medium">Vui lòng hoàn tất giao dịch trước khi đếm ngược kết thúc.</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-12 relative z-10">
+            {/* Order Details */}
+            <div>
+              <h2 className="text-xl font-bold mb-6 flex items-center border-b border-white/10 pb-4 text-white">
+                <ShieldCheck className="w-6 h-6 mr-3 text-primary" /> Thông tin Đơn hàng
+              </h2>
             <div className="space-y-4">
               <div className="flex justify-between text-slate-300">
                 <span>Mã đơn hàng:</span>
@@ -213,53 +238,47 @@ export default function Checkout() {
                   </div>
                 </div>
               )}
+              {/* Removed inline isProcessing box, replaced by full overlay above */}
             </div>
-
-            {isProcessing && (
-              <div className="mt-8 p-6 bg-slate-800/80 rounded-xl border border-primary/50 text-center">
-                <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                <p className="text-primary font-bold">Đang chờ xác nhận thanh toán...</p>
-                <p className="text-sm text-slate-400 mt-2">Vui lòng không đóng trình duyệt.</p>
-              </div>
-            )}
           </div>
 
-          {/* Payment Methods */}
-          <div className={`transition-opacity ${isProcessing ? 'opacity-50 pointer-events-none' : ''}`}>
-            <h2 className="text-xl font-bold mb-6 flex items-center border-b border-slate-700 pb-4">
-              <Wallet className="w-5 h-5 mr-2 text-primary" /> Chọn phương thức
-            </h2>
+            {/* Payment Methods */}
+            <div>
+              <h2 className="text-xl font-bold mb-6 flex items-center border-b border-white/10 pb-4 text-white">
+                <Wallet className="w-6 h-6 mr-3 text-primary" /> Chọn phương thức
+              </h2>
 
-            <div className="space-y-4">
-              <button
-                onClick={() => handlePayment()}
-                className="w-full flex items-center justify-between p-4 rounded-xl border-2 border-slate-600 hover:border-blue-500 hover:bg-blue-500/10 transition-all group"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center p-1">
-                    <span className="text-blue-600 font-black tracking-tighter text-xl">VNPAY</span>
+              <div className="space-y-4">
+                <button
+                  onClick={() => handlePayment()}
+                  className="w-full flex items-center justify-between p-5 rounded-2xl border-2 border-white/5 bg-slate-800/40 hover:border-blue-500 hover:bg-blue-500/10 hover:shadow-[0_0_20px_rgba(59,130,246,0.2)] transition-all duration-300 group"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 bg-white rounded-xl flex items-center justify-center p-1 shadow-lg group-hover:shadow-[0_0_15px_rgba(59,130,246,0.4)] transition-all">
+                      <span className="text-blue-600 font-black tracking-tighter text-xl">VNPAY</span>
+                    </div>
+                    <div className="text-left">
+                      <div className="font-bold text-lg text-white group-hover:text-blue-400 transition-colors">Ví VNPAY / VNPAY-QR</div>
+                      <div className="text-sm text-slate-400">Quét mã QR bằng ứng dụng ngân hàng</div>
+                    </div>
                   </div>
-                  <div className="text-left">
-                    <div className="font-bold group-hover:text-blue-400 transition-colors">Ví VNPAY / VNPAY-QR</div>
-                    <div className="text-xs text-slate-400">Quét mã QR bằng ứng dụng ngân hàng</div>
-                  </div>
-                </div>
-              </button>
+                </button>
 
-              <button
-                onClick={() => handlePayment()}
-                className="w-full flex items-center justify-between p-4 rounded-xl border-2 border-slate-600 hover:border-pink-500 hover:bg-pink-500/10 transition-all group"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-pink-600 rounded-lg flex items-center justify-center p-1">
-                    <span className="text-white font-black tracking-tighter text-lg">MoMo</span>
+                <button
+                  onClick={() => handlePayment()}
+                  className="w-full flex items-center justify-between p-5 rounded-2xl border-2 border-white/5 bg-slate-800/40 hover:border-pink-500 hover:bg-pink-500/10 hover:shadow-[0_0_20px_rgba(236,72,153,0.2)] transition-all duration-300 group"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 bg-gradient-to-br from-pink-500 to-rose-600 rounded-xl flex items-center justify-center p-1 shadow-lg group-hover:shadow-[0_0_15px_rgba(236,72,153,0.4)] transition-all">
+                      <span className="text-white font-black tracking-tighter text-lg">MoMo</span>
+                    </div>
+                    <div className="text-left">
+                      <div className="font-bold text-lg text-white group-hover:text-pink-400 transition-colors">Ví điện tử MoMo</div>
+                      <div className="text-sm text-slate-400">Thanh toán cực nhanh qua app</div>
+                    </div>
                   </div>
-                  <div className="text-left">
-                    <div className="font-bold group-hover:text-pink-400 transition-colors">Ví điện tử MoMo</div>
-                    <div className="text-xs text-slate-400">Thanh toán nhanh qua ứng dụng MoMo</div>
-                  </div>
-                </div>
-              </button>
+                </button>
+              </div>
             </div>
           </div>
         </div>

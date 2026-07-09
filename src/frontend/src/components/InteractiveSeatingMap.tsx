@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import toast from 'react-hot-toast';
+import { getErrorMessage } from '../utils/getErrorMessage';
 
 interface TicketCell {
   id: string;
@@ -42,13 +44,13 @@ export default function InteractiveSeatingMap({
     const fetchTickets = async () => {
       setLoading(true);
       try {
-        const res = await axios.get(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/concerts/${concertId}/zones/${ticketTypeId}/tickets`);
+        const res = await axios.get(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/concerts/${concertId}/zones/${ticketTypeId}/tickets`);
         if (active) {
           setTickets(res.data);
           setLoading(false);
         }
       } catch (err) {
-        console.error(err);
+        toast.error(getErrorMessage(err, 'Lỗi tải trạng thái ghế'));
         if (active) setLoading(false);
       }
     };
@@ -57,7 +59,7 @@ export default function InteractiveSeatingMap({
       if (!active) return;
       
       // Setup SSE for real-time updates after initial fetch
-      eventSource = new EventSource(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/concerts/${concertId}/zones/${ticketTypeId}/stream-tickets`);
+      eventSource = new EventSource(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/concerts/${concertId}/zones/${ticketTypeId}/stream-tickets`);
       
       eventSource.onmessage = (event) => {
         try {
@@ -68,7 +70,7 @@ export default function InteractiveSeatingMap({
             ));
           }
         } catch (error) {
-          console.error('Error parsing seat update', error);
+          return; // Silent error for SSE parsing
         }
       };
     });
@@ -147,7 +149,7 @@ export default function InteractiveSeatingMap({
 
                   let bgClass = "bg-slate-600 text-slate-400 cursor-not-allowed"; // SOLD
                   if (isSelected) {
-                    bgClass = "bg-rose-500 text-white shadow-lg shadow-rose-500/50 scale-110 z-10";
+                    bgClass = "bg-rose-500 text-white shadow-lg shadow-rose-500/50 scale-110 z-10 cursor-pointer";
                   } else if (ticket.status === 'HOLDING') {
                     bgClass = "bg-amber-500 text-amber-900 cursor-not-allowed"; // HOLDING
                   } else if (isAvailable) {
@@ -158,9 +160,9 @@ export default function InteractiveSeatingMap({
                     <div
                       key={`seat-${c}`}
                       onClick={() => {
-                        if (isAvailable) {
+                        if (isAvailable || isSelected) {
                           if (!isSelected && selectedTicketIds.length >= maxPerUser) {
-                            alert(`Bạn chỉ được chọn tối đa ${maxPerUser} ghế cho loại vé này!`);
+                            toast.error(`Bạn chỉ được chọn tối đa ${maxPerUser} ghế cho loại vé này!`);
                             return;
                           }
                           onToggleSeat(ticket.id, seatLabel);

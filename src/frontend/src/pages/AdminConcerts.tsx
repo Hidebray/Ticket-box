@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
-import { Plus, Edit2, Ticket, Grid, Sparkles, FileText } from 'lucide-react';
+import { Plus, Edit2, Ticket, Grid, Sparkles, FileText, Check, Trash2 } from 'lucide-react';
 import SeatingMapBuilder from '../components/admin/SeatingMapBuilder';
+import toast from 'react-hot-toast';
+import { getErrorMessage } from '../utils/getErrorMessage';
 
 
 export default function AdminConcerts() {
@@ -13,7 +15,7 @@ export default function AdminConcerts() {
   // States for Concert Form Modal
   const [showConcertModal, setShowConcertModal] = useState(false);
   const [currentConcert, setCurrentConcert] = useState<any>(null);
-  const [formData, setFormData] = useState({ name: '', description: '', start_time: '', status: 'DRAFT' });
+  const [formData, setFormData] = useState({ name: '', description: '', location: '', start_time: '', status: 'DRAFT' });
 
   // States for Ticket Type Modal
   const [showTicketModal, setShowTicketModal] = useState(false);
@@ -35,12 +37,12 @@ export default function AdminConcerts() {
 
   const fetchConcerts = async () => {
     try {
-      const res = await axios.get(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/concerts`, {
+      const res = await axios.get(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/concerts`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setConcerts(res.data);
     } catch (err) {
-      console.error(err);
+      toast.error(getErrorMessage(err, 'Lỗi tải danh sách sự kiện'));
     } finally {
       setLoading(false);
     }
@@ -53,35 +55,42 @@ export default function AdminConcerts() {
   const handleSaveConcert = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const payload = {
+        ...formData,
+        start_time: new Date(formData.start_time).toISOString()
+      };
+
       if (currentConcert) {
-        await axios.put(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/concerts/${currentConcert.id}`, formData, {
+        await axios.put(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/concerts/${currentConcert.id}`, payload, {
           headers: { Authorization: `Bearer ${token}` }
         });
       } else {
-        await axios.post(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/concerts`, formData, {
+        await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/concerts`, payload, {
           headers: { Authorization: `Bearer ${token}` }
         });
       }
       setShowConcertModal(false);
+      toast.success(currentConcert ? 'Cập nhật sự kiện thành công!' : 'Thêm sự kiện thành công!');
       fetchConcerts();
-    } catch (err) {
-      alert('Lỗi lưu sự kiện');
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Lỗi lưu sự kiện');
     }
   };
 
   const handleSaveTicketType = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await axios.post(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/ticket-types`, {
+      await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/ticket-types`, {
         concert_id: activeConcertId,
         ...ticketData
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setShowTicketModal(false);
+      toast.success('Thêm loại vé thành công!');
       fetchConcerts();
-    } catch (err) {
-      alert('Lỗi thêm loại vé');
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Lỗi thêm loại vé');
     }
   };
 
@@ -106,7 +115,7 @@ export default function AdminConcerts() {
 
     try {
       const res = await axios.post(
-        `\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/concerts/${activeConcert.id}/upload-bio`,
+        `${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/concerts/${activeConcert.id}/upload-bio`,
         bioFormData,
         {
           headers: {
@@ -117,12 +126,58 @@ export default function AdminConcerts() {
       );
       clearInterval(stepInterval);
       setGeneratedBio(res.data.bio);
-      setBioStep('Hoàn tất!');
-      fetchConcerts();
+      setIsGeneratingBio(false);
+      toast.success('AI đã viết xong! Vui lòng kiểm tra và lưu lại.');
     } catch (err: any) {
       clearInterval(stepInterval);
-      alert(err.response?.data?.message || 'Lỗi khi tạo AI Bio');
+      toast.error(err.response?.data?.message || 'Lỗi khi tạo AI Bio');
       setIsGeneratingBio(false);
+    }
+  };
+
+  const handleSaveBio = async () => {
+    if (!activeConcert || !generatedBio) return;
+    try {
+      await axios.put(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/concerts/${activeConcert.id}`, {
+        name: activeConcert.name,
+        description: generatedBio,
+        location: activeConcert.location,
+        start_time: activeConcert.start_time,
+        status: activeConcert.status
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success('Đã lưu nội dung Bio vào sự kiện!');
+      setShowBioModal(false);
+      fetchConcerts();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Lỗi khi lưu Bio');
+    }
+  };
+
+  const handleDeleteConcert = async (id: string) => {
+    if (!window.confirm('Bạn có chắc chắn muốn xóa sự kiện này? Hành động này không thể hoàn tác.')) return;
+    try {
+      await axios.delete(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/concerts/${id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success('Xóa sự kiện thành công!');
+      fetchConcerts();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Lỗi khi xóa sự kiện');
+    }
+  };
+
+  const handleDeleteTicketType = async (id: string) => {
+    if (!window.confirm('Bạn có chắc chắn muốn xóa hạng vé này?')) return;
+    try {
+      await axios.delete(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/admin/ticket-types/${id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success('Xóa hạng vé thành công!');
+      fetchConcerts();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Lỗi khi xóa hạng vé');
     }
   };
 
@@ -134,7 +189,7 @@ export default function AdminConcerts() {
       <div className="flex justify-between items-center mb-8">
         <h1 className="text-3xl font-bold">Quản lý Sự kiện</h1>
         <button 
-          onClick={() => { setCurrentConcert(null); setFormData({ name: '', description: '', start_time: '', status: 'DRAFT' }); setShowConcertModal(true); }}
+          onClick={() => { setCurrentConcert(null); setFormData({ name: '', description: '', location: '', start_time: '', status: 'DRAFT' }); setShowConcertModal(true); }}
           className="bg-primary hover:bg-rose-600 px-4 py-2 rounded-xl flex items-center gap-2 font-bold"
         >
           <Plus className="w-5 h-5" /> Thêm Sự kiện
@@ -163,18 +218,27 @@ export default function AdminConcerts() {
                   </span>
                 </td>
                 <td className="p-4">
-                  <div className="flex flex-col gap-1">
+                  <div className="flex flex-wrap gap-2">
                     {concert.ticket_types?.map((tt: any) => (
-                      <div key={tt.id} className="flex items-center gap-2">
-                        <span className="text-xs bg-slate-700 px-2 py-1 rounded-md text-slate-300 inline-block">
-                          {tt.name} ({tt.total_quantity} vé) - Max: {tt.max_per_user}
+                      <div key={tt.id} className="flex items-center gap-1 bg-slate-700/50 pr-1 pl-3 py-1 rounded-lg border border-slate-600">
+                        <span className="text-xs font-medium text-slate-300">
+                          {tt.name} ({tt.total_quantity})
                         </span>
+                        {tt.type !== 'GUEST' && (
+                          <button 
+                            onClick={() => { setActiveConcert(concert); setActiveConcertId(concert.id); setActiveTicketType(tt); setShowMapModal(true); }}
+                            className="p-1.5 text-emerald-400 hover:bg-emerald-500/20 rounded-md transition-colors"
+                            title="Sơ đồ ghế"
+                          >
+                            <Grid className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         <button 
-                          onClick={() => { setActiveConcertId(concert.id); setActiveTicketType(tt); setShowMapModal(true); }}
-                          className="p-1 text-emerald-400 hover:bg-emerald-500/20 rounded transition-colors"
-                          title="Sơ đồ ghế"
+                          onClick={() => handleDeleteTicketType(tt.id)}
+                          className="p-1.5 text-rose-400 hover:bg-rose-500/20 rounded-md transition-colors"
+                          title="Xóa hạng vé"
                         >
-                          <Grid className="w-4 h-4" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     ))}
@@ -202,12 +266,18 @@ export default function AdminConcerts() {
                   <button 
                     onClick={() => { 
                       setCurrentConcert(concert); 
-                      setFormData({ name: concert.name, description: concert.description, start_time: new Date(concert.start_time).toISOString().slice(0, 16), status: concert.status }); 
+                      setFormData({ name: concert.name, description: concert.description, location: concert.location || '', start_time: new Date(concert.start_time).toISOString().slice(0, 16), status: concert.status }); 
                       setShowConcertModal(true); 
                     }}
                     className="p-2 text-amber-400 hover:bg-amber-500/20 rounded-lg transition-colors" title="Sửa sự kiện"
                   >
                     <Edit2 className="w-5 h-5" />
+                  </button>
+                  <button 
+                    onClick={() => handleDeleteConcert(concert.id)}
+                    className="p-2 text-rose-400 hover:bg-rose-500/20 rounded-lg transition-colors" title="Xóa sự kiện"
+                  >
+                    <Trash2 className="w-5 h-5" />
                   </button>
                 </td>
               </tr>
@@ -225,6 +295,10 @@ export default function AdminConcerts() {
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-1">Tên sự kiện</label>
                 <input required type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-white" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">Địa điểm</label>
+                <input required type="text" value={formData.location} onChange={e => setFormData({...formData, location: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2 text-white" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-1">Mô tả</label>
@@ -299,9 +373,9 @@ export default function AdminConcerts() {
             <SeatingMapBuilder 
               concertId={activeConcertId}
               ticketTypeId={activeTicketType.id}
-              initialRows={activeTicketType.seating_map?.rows || 10}
-              initialCols={activeTicketType.seating_map?.cols || 20}
-              initialDisabled={activeTicketType.seating_map?.disabledSeats || []}
+              initialRows={activeConcert?.seating_map?.[activeTicketType.id]?.rows || (activeTicketType.total_quantity ? Math.ceil(activeTicketType.total_quantity / Math.min(10, activeTicketType.total_quantity)) : 10)}
+              initialCols={activeConcert?.seating_map?.[activeTicketType.id]?.cols || (activeTicketType.total_quantity ? Math.min(10, activeTicketType.total_quantity) : 20)}
+              initialDisabled={activeConcert?.seating_map?.[activeTicketType.id]?.disabledSeats || []}
               onSave={() => {
                 setShowMapModal(false);
                 fetchConcerts();
@@ -354,25 +428,39 @@ export default function AdminConcerts() {
                 </div>
               )}
 
-              {isGeneratingBio && (
+              {(isGeneratingBio || generatedBio) && (
                 <div className="p-8 bg-slate-900/50 rounded-2xl border border-purple-500/20 text-center flex flex-col items-center">
                   <div className="relative w-16 h-16 mb-4">
-                    <div className="absolute inset-0 rounded-full border-4 border-purple-500/20 border-t-purple-500 animate-spin"></div>
-                    <Sparkles className="absolute inset-0 w-6 h-6 text-purple-400 m-auto animate-pulse" />
+                    {generatedBio ? (
+                      <div className="absolute inset-0 rounded-full border-4 border-emerald-500 flex items-center justify-center bg-emerald-500/10">
+                        <Check className="w-8 h-8 text-emerald-400" />
+                      </div>
+                    ) : (
+                      <>
+                        <div className="absolute inset-0 rounded-full border-4 border-purple-500/20 border-t-purple-500 animate-spin"></div>
+                        <Sparkles className="absolute inset-0 w-6 h-6 text-purple-400 m-auto animate-pulse" />
+                      </>
+                    )}
                   </div>
-                  <p className="text-purple-400 font-bold text-lg mb-1">{bioStep}</p>
-                  <p className="text-sm text-slate-400">Quá trình này có thể mất từ 5-15 giây tùy thuộc dung lượng PDF.</p>
+                  <p className={`font-bold text-lg mb-1 ${generatedBio ? 'text-emerald-400' : 'text-purple-400'}`}>
+                    {generatedBio ? 'Hoàn tất!' : bioStep}
+                  </p>
+                  {!generatedBio && <p className="text-sm text-slate-400">Quá trình này có thể mất từ 5-15 giây tùy thuộc dung lượng PDF.</p>}
                 </div>
               )}
 
               {generatedBio && (
                 <div className="space-y-4">
                   <h3 className="font-bold text-sm text-purple-400 uppercase tracking-wider">Mô tả giới thiệu do AI sinh:</h3>
-                  <div className="bg-slate-900/60 p-6 rounded-2xl border border-slate-700/50 text-slate-300 text-sm leading-relaxed max-h-60 overflow-y-auto">
-                    {generatedBio}
-                  </div>
-                  <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-xs text-emerald-400 font-medium">
-                    ✓ Đã lưu thành công vào cơ sở dữ liệu và tự động làm mới giao diện khán giả.
+                  <textarea 
+                    value={generatedBio}
+                    onChange={(e) => setGeneratedBio(e.target.value)}
+                    className="w-full bg-slate-900/60 p-4 rounded-2xl border border-purple-500/50 focus:border-purple-400 focus:ring-2 focus:ring-purple-500/20 text-slate-200 text-sm leading-relaxed h-48 custom-scrollbar resize-none transition-all"
+                    placeholder="Chỉnh sửa nội dung AI sinh tại đây..."
+                  />
+                  <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-xs text-blue-400 font-medium flex items-start gap-2">
+                    <span className="text-lg leading-none">💡</span>
+                    <span>Bạn có thể tự do chỉnh sửa lại văn bản trên cho đúng ý đồ trước khi bấm "Lưu vào Sự kiện".</span>
                   </div>
                 </div>
               )}
@@ -383,15 +471,24 @@ export default function AdminConcerts() {
                   onClick={() => setShowBioModal(false)} 
                   className="flex-1 px-5 py-3 bg-slate-700 hover:bg-slate-600 rounded-xl font-bold transition-all text-center"
                 >
-                  {generatedBio ? 'Đóng' : 'Hủy'}
+                  Hủy
                 </button>
-                {!generatedBio && (
+                {!generatedBio && !isGeneratingBio && (
                   <button 
                     type="submit" 
-                    disabled={!bioFile || isGeneratingBio}
-                    className="flex-1 px-5 py-3 bg-purple-600 hover:bg-purple-500 disabled:bg-slate-700 disabled:text-slate-500 rounded-xl font-bold transition-all shadow-lg shadow-purple-600/30 flex justify-center items-center gap-2"
+                    disabled={!bioFile}
+                    className="flex-1 px-5 py-3 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-400 hover:to-indigo-400 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl font-bold transition-all shadow-lg text-center"
                   >
-                    Bắt đầu Phân tích AI
+                    Bắt đầu Sinh AI
+                  </button>
+                )}
+                {generatedBio && (
+                  <button 
+                    type="button"
+                    onClick={handleSaveBio}
+                    className="flex-1 px-5 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 rounded-xl font-bold transition-all shadow-lg text-center text-emerald-950"
+                  >
+                    Lưu vào Sự kiện
                   </button>
                 )}
               </div>

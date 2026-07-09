@@ -2,12 +2,11 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
-import { Lock, Mail, User as UserIcon } from 'lucide-react';
+import { Mail, Lock } from 'lucide-react';
 
 export default function Register() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState('AUDIENCE');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const { login } = useAuth();
@@ -19,11 +18,11 @@ export default function Register() {
     setIsLoading(true);
 
     try {
-      // 1. Đăng ký
-      await axios.post(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/auth/register`, { email, password, role });
+      // 1. Đăng ký (Role mặc định là AUDIENCE, BE đã khóa cứng)
+      await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/auth/register`, { email, password });
       
       // 2. Tự động Login sau khi đăng ký thành công
-      const loginRes = await axios.post(`\${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/auth/login`, { email, password });
+      const loginRes = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:3001/api'}/auth/login`, { email, password });
       login(loginRes.data.token, loginRes.data.user);
       
       const loggedInRole = loginRes.data.user.role;
@@ -56,24 +55,6 @@ export default function Register() {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-2">Vai trò (Role)</label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
-                <UserIcon className="w-5 h-5" />
-              </div>
-              <select
-                className="w-full bg-slate-800/50 border border-slate-700 text-white rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 appearance-none transition-all"
-                value={role}
-                onChange={e => setRole(e.target.value)}
-              >
-                <option value="AUDIENCE">Khán giả (Audience)</option>
-                <option value="ORGANIZER">Ban tổ chức (Organizer)</option>
-                <option value="STAFF">Soát vé (Staff)</option>
-              </select>
-            </div>
-          </div>
-
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">Email</label>
             <div className="relative">

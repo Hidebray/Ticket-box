@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { User, LogOut, Ticket } from 'lucide-react';
+import { User, LogOut, Ticket, LayoutDashboard, QrCode } from 'lucide-react';
 
 export default function Navbar() {
   const { user, logout } = useAuth();
@@ -21,12 +21,32 @@ export default function Navbar() {
         <div className="flex items-center gap-6">
           {user ? (
             <>
-              <button 
-                onClick={() => navigate('/dashboard')}
-                className="flex items-center gap-2 text-slate-300 hover:text-white transition-colors font-medium"
-              >
-                <Ticket className="w-4 h-4" /> Vé của tôi
-              </button>
+              {user.role === 'AUDIENCE' && (
+                <button 
+                  onClick={() => navigate('/dashboard')}
+                  className="flex items-center gap-2 text-slate-300 hover:text-white transition-colors font-medium"
+                >
+                  <Ticket className="w-4 h-4" /> Vé của tôi
+                </button>
+              )}
+              
+              {['SUPER_ADMIN', 'ORGANIZER'].includes(user.role) && (
+                <button 
+                  onClick={() => navigate('/admin/concerts')}
+                  className="flex items-center gap-2 text-slate-300 hover:text-primary transition-colors font-medium"
+                >
+                  <LayoutDashboard className="w-4 h-4" /> Trang Quản trị
+                </button>
+              )}
+
+              {user.role === 'STAFF' && (
+                <button 
+                  onClick={() => navigate('/staff/checkin')}
+                  className="flex items-center gap-2 text-slate-300 hover:text-emerald-400 transition-colors font-medium"
+                >
+                  <QrCode className="w-4 h-4" /> Quét mã QR
+                </button>
+              )}
               
               <div className="flex items-center gap-4 bg-slate-800/80 pl-4 pr-2 py-1.5 rounded-full border border-slate-700">
                 <span className="text-sm text-slate-300 hidden md:block">
