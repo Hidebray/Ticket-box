@@ -147,7 +147,7 @@ export default function ConcertDetail() {
             <h2 className="text-3xl font-black mb-6 flex items-center border-b-2 border-primary/30 pb-4 inline-flex">
               <span className="bg-primary/20 text-primary p-2 rounded-xl mr-4 shadow-[0_0_15px_rgba(244,63,94,0.3)]">🎤</span> Giới thiệu Nghệ sĩ & Sự kiện
             </h2>
-            <div className="prose prose-invert prose-slate max-w-none text-slate-300 leading-relaxed bg-surface p-8 rounded-2xl border border-slate-700/50">
+            <div className="prose prose-invert prose-slate max-w-none text-slate-300 leading-relaxed bg-surface p-8 rounded-2xl border border-slate-700/50 whitespace-pre-line">
               {concert.description}
             </div>
           </section>
