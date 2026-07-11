@@ -58,6 +58,14 @@ async function main() {
         }
     });
 
+    const organizer2 = await prisma.users.create({
+        data: {
+            email: 'organizer2@ticketbox.vn',
+            password: defaultPassword,
+            role: 'ORGANIZER'
+        }
+    });
+
     const audience = await prisma.users.create({
         data: {
             email: 'audience@ticketbox.vn',
