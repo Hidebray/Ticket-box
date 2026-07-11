@@ -4,13 +4,23 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test:1": "node test-flow1-rbac.cjs",
+    "test:2": "node test-flow2-map-builder.cjs",
+    "test:3": "node test-flow3-checkout.cjs",
+    "test:4": "node test-flow4-race-condition.cjs",
+    "test:5": "node test-flow5-webhook.cjs",
+    "test:6": "node test-flow6-checkin.cjs",
+    "test:7": "node test-flow7-rate-limiting.cjs",
+    "test:8": "node test-flow8-bullmq-csv.cjs",
+    "test:9": "node test-flow9-ai-bio.cjs",
+    "test:all": "npm run test:1 && npm run test:2 && npm run test:3 && npm run test:4 && npm run test:5 && npm run test:6 && npm run test:7 && npm run test:8 && npm run test:9"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "axios": "^1.18.1"
+    "axios": "^1.18.1",
+    "form-data": "^4.0.6"
   }
 }

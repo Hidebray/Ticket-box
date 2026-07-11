@@ -2,14 +2,14 @@ const axios = require('axios');
 
 const API_URL = 'http://localhost:3001/api';
 
-async function testFlow1() {
+async function run() {
   try {
-    console.log('=== BẮT ĐẦU TEST FLOW 1: MULTI-TENANT ===');
+    console.log('=== BẮT ĐẦU TEST FLOW 1: MULTI-TENANT (RBAC) ===');
     
     // 1. Đăng nhập org1
     console.log('Đăng nhập org1...');
     const login1 = await axios.post(`${API_URL}/auth/login`, {
-      email: 'org1@gmail.com',
+      email: 'organizer@ticketbox.vn',
       password: '123456'
     });
     const token1 = login1.data.token;
@@ -31,7 +31,7 @@ async function testFlow1() {
     // 3. Đăng nhập org2
     console.log('Đăng nhập org2...');
     const login2 = await axios.post(`${API_URL}/auth/login`, {
-      email: 'org2@gmail.com',
+      email: 'organizer2@ticketbox.vn',
       password: '123456'
     });
     const token2 = login2.data.token;
@@ -51,10 +51,10 @@ async function testFlow1() {
       console.log('✅ THÀNH CÔNG: org2 KHÔNG nhìn thấy concert của org1.');
     }
     
-    console.log('=== TEST FLOW 1 HOÀN TẤT ===');
+    console.log('=== TEST FLOW 1 HOÀN TẤT ===\n');
   } catch (err) {
     console.error('Lỗi khi chạy test:', err.response?.data || err.message);
   }
 }
 
-testFlow1();
+run();
