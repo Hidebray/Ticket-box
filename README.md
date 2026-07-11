@@ -89,7 +89,7 @@ Truy cập vào `http://localhost:5173` để mở ứng dụng web.
 | Role | Email | Password | Quyền hạn |
 |------|-------|----------|-----------|
 | SUPER_ADMIN | `admin@ticketbox.vn` | `admin123` | Quản lý toàn bộ hệ thống |
-| ORGANIZER | `organizer@ticketbox.vn` | `123456` | Tạo và quản lý concert |
+| ORGANIZER | `organizer@ticketbox.vn` <br> `organizer2@ticketbox.vn` | `123456` | Tạo và quản lý concert (Multi-tenant) |
 | STAFF | `staff@ticketbox.vn` | `123456` | Soát vé tại cổng sự kiện (Check-in) |
 | AUDIENCE | `audience@ticketbox.vn` | `123456` | Xem và đặt vé |
 
@@ -102,10 +102,9 @@ Hệ thống được thiết kế chặt chẽ với nhiều Role. Dưới đâ
 ### Kịch bản 1: Phân quyền Super Admin & Ban Tổ Chức (Organizer)
 - **Mục tiêu**: Kiểm tra tính phân tách dữ liệu (Multi-tenant) giữa các Ban tổ chức.
 - **Thực hiện**:
-  1. Đăng nhập bằng tài khoản Super Admin mặc định: `admin@ticketbox.vn` / `admin123`.
-  2. Tạo 2 tài khoản có role `ORGANIZER` (Ví dụ: `org1@gmail.com` và `org2@gmail.com`).
-  3. Đăng nhập `org1@gmail.com` và tạo một sự kiện tên "Concert Org 1".
-  4. Đăng nhập `org2@gmail.com` và kiểm tra Dashboard. Bạn sẽ **KHÔNG** nhìn thấy "Concert Org 1".
+  1. Hệ thống đã Seed sẵn 2 tài khoản `organizer@ticketbox.vn` và `organizer2@ticketbox.vn`.
+  2. Đăng nhập `organizer@ticketbox.vn` và tạo một sự kiện tên "Concert Org 1".
+  3. Đăng nhập `organizer2@ticketbox.vn` và kiểm tra Dashboard. Bạn sẽ **KHÔNG** nhìn thấy "Concert Org 1".
 
 ### Kịch bản 2: Thiết lập Sơ đồ Ghế Động (Seating Map Builder)
 - **Mục tiêu**: Đảm bảo Ban tổ chức có thể vẽ sơ đồ nhà hát và lưu xuống database với kỹ thuật Batch Insert.
