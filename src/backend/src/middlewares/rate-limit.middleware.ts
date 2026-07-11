@@ -18,12 +18,12 @@ export const globalLimiter = rateLimit({
 // Strict rate limiter cho checkout và các tính năng quan trọng (5 req/min)
 export const strictLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 phút
-  max: 1000, // Tối đa 10 requests mỗi User/IP cho booking
+  max: 5, // Tối đa 5 requests mỗi User/IP cho booking
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: 'Booking rate limit exceeded, please wait a minute' },
   keyGenerator: (req) => {
-    return (req as import('express').Request & { user?: { id: string } }).user?.id || req.ip || 'unknown';
+    return (req as import('express').Request & { user?: { id: string } }).user?.id || (req.headers['x-forwarded-for'] as string) || 'unknown';
   },
   store: new RedisStore({
     // @ts-expect-error - Đã chắc chắn dùng ioredis
@@ -34,7 +34,7 @@ export const strictLimiter = rateLimit({
 // Login Limiter (10 req/15 min, bỏ qua thành công)
 export const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 phút
-  max: 1000,
+  max: 10,
   skipSuccessfulRequests: true, // Chỉ đếm request lỗi
   standardHeaders: true,
   legacyHeaders: false,
