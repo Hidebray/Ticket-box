@@ -12,7 +12,7 @@ Hệ thống bán vé sự kiện toàn diện với kiến trúc Multi-tenant (
 - **Node.js**: Phiên bản v18.x trở lên.
 - **Docker & Docker Compose**: Để chạy PostgreSQL và Redis (bắt buộc nếu không cài sẵn).
 
-> ⚠️ Nếu máy đã cài **PostgreSQL** trực tiếp (không qua Docker), hãy đảm bảo nó **không chiếm cổng `5432`** — nếu có, hãy tắt service đó trước khi chạy Docker.
+> ⚠️ Lưu ý: Docker compose được cấu hình để map **PostgreSQL** ra cổng `5433` trên máy host. Hãy đảm bảo máy bạn không có service nào đang chạy chiếm cổng `5433`.
 
 ---
 
@@ -27,7 +27,7 @@ docker-compose up -d
 ```
 
 Lệnh này sẽ khởi động:
-- **PostgreSQL** (cổng `5432`) — database chính
+- **PostgreSQL** (cổng `5433`) — database chính
 - **Redis** (cổng `6379`) — hàng đợi và caching
 - **pgAdmin** (cổng `5050`) — giao diện quản lý DB tại `http://localhost:5050`
 
@@ -46,23 +46,24 @@ Tạo file `.env` trong thư mục `src/backend` với nội dung:
 
 ```env
 PORT=3001
-DATABASE_URL="postgresql://ticketbox_user:ticketbox_password@localhost:5432/ticketbox_db?schema=public"
+DATABASE_URL="postgresql://ticketbox_user:ticketbox_password@localhost:5433/ticketbox_db?schema=public&connection_limit=15"
+DATABASE_URL_WORKER="postgresql://ticketbox_user:ticketbox_password@localhost:5433/ticketbox_db?schema=public&connection_limit=10"
 REDIS_URL="redis://localhost:6379"
 ```
 
 Generate Prisma Client và nạp dữ liệu mẫu (seed):
 
 ```bash
-npx prisma generate --schema="../data/schema.prisma"
+npx prisma generate
 npx prisma db seed
 ```
 
 > 💡 Lệnh seed sẽ tự động xóa dữ liệu cũ, tạo lại schema và nạp dữ liệu mẫu gồm users, concerts, ticket types và ghế ngồi.
 
-Khởi chạy Server Backend (chế độ dev, tự reload):
+Khởi chạy Server Backend cùng Worker (chế độ dev, tự reload):
 
 ```bash
-npm run dev
+npm run dev:all
 ```
 
 Backend sẽ chạy tại `http://localhost:3001`.
@@ -87,8 +88,9 @@ Truy cập vào `http://localhost:5173` để mở ứng dụng web.
 
 | Role | Email | Password | Quyền hạn |
 |------|-------|----------|-----------|
-| SUPER_ADMIN | `admin@ticketbox.com` | `admin123` | Quản lý toàn bộ hệ thống |
+| SUPER_ADMIN | `admin@ticketbox.vn` | `admin123` | Quản lý toàn bộ hệ thống |
 | ORGANIZER | `organizer@ticketbox.vn` | `123456` | Tạo và quản lý concert |
+| STAFF | `staff@ticketbox.vn` | `123456` | Soát vé tại cổng sự kiện (Check-in) |
 | AUDIENCE | `audience@ticketbox.vn` | `123456` | Xem và đặt vé |
 
 ---
@@ -100,7 +102,7 @@ Hệ thống được thiết kế chặt chẽ với nhiều Role. Dưới đâ
 ### Kịch bản 1: Phân quyền Super Admin & Ban Tổ Chức (Organizer)
 - **Mục tiêu**: Kiểm tra tính phân tách dữ liệu (Multi-tenant) giữa các Ban tổ chức.
 - **Thực hiện**:
-  1. Đăng nhập bằng tài khoản Super Admin mặc định: `admin@ticketbox.com` / `admin123`.
+  1. Đăng nhập bằng tài khoản Super Admin mặc định: `admin@ticketbox.vn` / `admin123`.
   2. Tạo 2 tài khoản có role `ORGANIZER` (Ví dụ: `org1@gmail.com` và `org2@gmail.com`).
   3. Đăng nhập `org1@gmail.com` và tạo một sự kiện tên "Concert Org 1".
   4. Đăng nhập `org2@gmail.com` và kiểm tra Dashboard. Bạn sẽ **KHÔNG** nhìn thấy "Concert Org 1".
